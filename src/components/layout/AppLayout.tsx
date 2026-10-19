@@ -27,13 +27,13 @@ export function AppLayout() {
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
       <div className="hidden lg:block">
-        <Sidebar />
+          <Sidebar role={user?.role} />
       </div>
 
       {menuOpen && (
         <div className="fixed inset-0 z-40 flex lg:hidden">
           <div className="relative z-50">
-            <Sidebar onNavigate={() => setMenuOpen(false)} />
+            <Sidebar role={user?.role} onNavigate={() => setMenuOpen(false)} />
             <button
               onClick={() => setMenuOpen(false)}
               aria-label="Cerrar menú"

@@ -33,6 +33,7 @@ import type {
   ModifierGroup,
   OrderItem,
 } from "../types";
+import BillingPanel from "../components/BillingPanel";
 
 const money = (n: number | string) =>
   new Intl.NumberFormat("es-CL", {
@@ -68,14 +69,12 @@ const nextStatus: Partial<Record<OrderStatus, OrderStatus>> = {
   SENT: "IN_PROGRESS",
   IN_PROGRESS: "READY",
   READY: "DELIVERED",
-  DELIVERED: "CLOSED",
 };
 
 const nextLabel: Partial<Record<OrderStatus, string>> = {
   SENT: "Marcar en preparación",
   IN_PROGRESS: "Marcar listo",
   READY: "Marcar entregado",
-  DELIVERED: "Cerrar pedido",
 };
 
 const input =
@@ -847,6 +846,14 @@ export default function OrdersPage() {
                       del pedido puede requerir actualización manual mientras
                       integramos Preparación.
                     </p>
+                  )}
+                  {["DELIVERED", "CLOSED"].includes(detail.status) && (
+                    <BillingPanel
+                      orderId={detail.id}
+                      locationId={detail.locationId}
+                      orderStatus={detail.status}
+                      onOrderUpdated={refresh}
+                    />
                   )}
                 </aside>
               </div>

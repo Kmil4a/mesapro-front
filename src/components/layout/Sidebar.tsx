@@ -12,11 +12,13 @@ import {
   UtensilsCrossed,
   type LucideIcon,
 } from "lucide-react";
+import type { UserRole } from "../../auth/types";
 
 interface MenuItem {
   label: string;
   path: string;
   icon: LucideIcon;
+  roles?: UserRole[];
 }
 
 const menu: MenuItem[] = [
@@ -26,12 +28,12 @@ const menu: MenuItem[] = [
   { label: "Preparación", path: "/preparacion", icon: ChefHat },
   { label: "Caja", path: "/caja", icon: Wallet },
   { label: "Productos", path: "/productos", icon: Package },
-  { label: "Reportes", path: "/reportes", icon: BarChart3 },
-  { label: "Usuarios", path: "/usuarios", icon: Users },
-  { label: "Configuración", path: "/configuracion", icon: Settings },
+  { label: "Reportes", path: "/reportes", icon: BarChart3, roles: ["OWNER", "ADMIN", "MANAGER"] },
+  { label: "Usuarios", path: "/usuarios", icon: Users, roles: ["OWNER", "ADMIN", "MANAGER"] },
+  { label: "Configuración", path: "/configuracion", icon: Settings, roles: ["OWNER", "ADMIN"] },
 ];
 
-export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+export default function Sidebar({ onNavigate, role }: { onNavigate?: () => void; role?: UserRole }) {
   return (
     <aside className="flex h-full w-64 flex-col bg-slate-900 text-white">
       <div className="flex h-20 items-center gap-3 border-b border-slate-700 px-6">
@@ -40,7 +42,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto p-3">
-        {menu.map(({ label, path, icon: Icon }) => (
+        {menu.filter((item) => !item.roles || (role && item.roles.includes(role))).map(({ label, path, icon: Icon }) => (
           <NavLink
             key={path}
             to={path}

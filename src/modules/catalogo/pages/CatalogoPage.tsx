@@ -40,6 +40,13 @@ type Kind =
   | "group"
   | "modifier"
   | "combo";
+type CatalogRow =
+  | Category
+  | Workstation
+  | Product
+  | ModifierGroup
+  | Modifier
+  | Combo;
 type Edit = { kind: Kind; id?: string } | null;
 const money = (value: number | string) =>
   new Intl.NumberFormat("es-CL", {
@@ -105,6 +112,26 @@ function Modal({
       </section>
     </div>
   );
+}
+
+function isPricedRow(row: CatalogRow): row is Product | Combo {
+  return "price" in row;
+}
+
+function isModifierRow(row: CatalogRow): row is Modifier {
+  return "priceDelta" in row;
+}
+
+function isProductRow(row: CatalogRow): row is Product {
+  return "categoryId" in row;
+}
+
+function isModifierGroupRow(row: CatalogRow): row is ModifierGroup {
+  return "minSelections" in row;
+}
+
+function isComboRow(row: CatalogRow): row is Combo {
+  return "items" in row;
 }
 
 export default function CatalogoPage() {
@@ -212,7 +239,7 @@ export default function CatalogoPage() {
   const visibleModifiers = modifiers.filter((m) =>
     products.some((p) => p.id === m.productId),
   );
-  const rows = useMemo(() => {
+  const rows = useMemo<CatalogRow[]>(() => {
     const matches = (s: string) =>
       s.toLocaleLowerCase("es").includes(search.trim().toLocaleLowerCase("es"));
     switch (tab) {
@@ -609,29 +636,29 @@ export default function CatalogoPage() {
             >
               <div className="flex items-start justify-between gap-3">
                 <h3 className="font-semibold text-slate-900">{row.name}</h3>
-                {"price" in row && (
+                {isPricedRow(row) && (
                   <span className="shrink-0 font-bold text-indigo-700">
                     {money(row.price)}
                   </span>
                 )}
-                {"priceDelta" in row && (
+                {isModifierRow(row) && (
                   <span className="shrink-0 font-bold text-indigo-700">
                     +{money(row.priceDelta)}
                   </span>
                 )}
               </div>
-              {"description" in row && row.description && (
+              {isPricedRow(row) && row.description && (
                 <p className="mt-2 line-clamp-2 text-sm text-slate-500">
                   {row.description}
                 </p>
               )}
-              {"categoryId" in row && (
+              {isProductRow(row) && (
                 <p className="mt-2 text-xs text-slate-500">
                   {categories.find((c) => c.id === row.categoryId)?.name ??
                     "Sin categoría"}
                 </p>
               )}
-              {"productId" in row && (
+              {isModifierRow(row) && (
                 <p className="mt-2 text-xs text-slate-500">
                   Producto:{" "}
                   {products.find((p) => p.id === row.productId)?.name ??
@@ -641,13 +668,13 @@ export default function CatalogoPage() {
                     "No disponible"}
                 </p>
               )}
-              {"minSelections" in row && (
+              {isModifierGroupRow(row) && (
                 <p className="mt-2 text-xs text-slate-500">
                   Selecciones: {row.minSelections} a{" "}
                   {row.maxSelections ?? "sin límite"}
                 </p>
               )}
-              {"items" in row && (
+              {isComboRow(row) && (
                 <p className="mt-2 text-xs text-slate-500">
                   {row.items.length} productos incluidos
                 </p>
@@ -671,7 +698,7 @@ export default function CatalogoPage() {
                     </button>
                   </>
                 )}
-                {"items" in row && (
+                {isComboRow(row) && (
                   <button
                     className={secondary}
                     onClick={() => {
