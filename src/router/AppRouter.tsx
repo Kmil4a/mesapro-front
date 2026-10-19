@@ -7,6 +7,8 @@ import { DashboardPage } from "../pages/DashboardPage";
 import { ModulePlaceholder } from "../pages/ModulePlaceholder";
 import MesasPage from "../modules/mesas/pages/MesasPage";
 import CatalogoPage from "../modules/catalogo/pages/CatalogoPage";
+import OrdersPage from "../modules/pedidos/pages/OrdersPage";
+import PreparationsPage from "../modules/preparations/pages/PreparationsPage";
 
 export function AppRouter() {
   return (
@@ -17,14 +19,8 @@ export function AppRouter() {
         <Route element={<AppLayout />}>
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/mesas" element={<MesasPage />} />
-          <Route
-            path="/pedidos"
-            element={<ModulePlaceholder title="Pedidos" />}
-          />
-          <Route
-            path="/preparacion"
-            element={<ModulePlaceholder title="Preparación" />}
-          />
+          <Route path="/pedidos" element={<OrdersPage />} />
+          <Route path="/preparacion" element={<PreparationsPage />} />
           <Route path="/caja" element={<ModulePlaceholder title="Caja" />} />
           <Route path="/productos" element={<CatalogoPage />} />
           <Route
