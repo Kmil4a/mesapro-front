@@ -30,4 +30,11 @@ export const tableSessionsApi = {
       },
     );
   },
+
+  transfer(id: string, waiterId: string) {
+    return apiRequest<TableSession>(`/table-sessions/${encodeURIComponent(id)}/transfer`, {
+      method: "PATCH",
+      body: JSON.stringify({ waiterId }),
+    });
+  },
 };

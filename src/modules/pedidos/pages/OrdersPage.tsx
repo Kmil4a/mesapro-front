@@ -18,7 +18,9 @@ import {
   Minus,
   ClipboardList,
 } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../../auth/AuthContext";
+import { useAppDialog } from "../../../components/ui/AppDialog";
 import { useLocation } from "../../../context/LocationContext";
 import { tableSessionsApi } from "../../mesas/api/tableSessions.api";
 import type { TableSession } from "../../mesas/types";
@@ -65,15 +67,32 @@ const statusStyle: Record<OrderStatus, string> = {
   CANCELLED: "bg-red-100 text-red-700",
 };
 
+function orderCode(id: string) {
+  return id.slice(-6).toUpperCase();
+}
+
+function currentBill(order: Order) {
+  return order.billOrders
+    ?.map(({ bill }) => bill)
+    .find((bill) => bill.status !== "VOID");
+}
+
+function directCashTotal(order: Order) {
+  return (currentBill(order)?.payments ?? [])
+    .filter(
+      (payment) =>
+        payment.method === "CASH" &&
+        payment.status === "CONFIRMED" &&
+        !payment.cashHandover,
+    )
+    .reduce((sum, payment) => sum + Number(payment.amount), 0);
+}
+
 const nextStatus: Partial<Record<OrderStatus, OrderStatus>> = {
-  SENT: "IN_PROGRESS",
-  IN_PROGRESS: "READY",
   READY: "DELIVERED",
 };
 
 const nextLabel: Partial<Record<OrderStatus, string>> = {
-  SENT: "Marcar en preparación",
-  IN_PROGRESS: "Marcar listo",
   READY: "Marcar entregado",
 };
 
@@ -86,6 +105,8 @@ const secondary =
 
 export default function OrdersPage() {
   const { user } = useAuth();
+  const { confirm, input: askInput } = useAppDialog();
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
     locationId,
     locations,
@@ -174,6 +195,18 @@ export default function OrdersPage() {
   }, [locationId, load]);
 
   useEffect(() => {
+    const requestedOrderId = searchParams.get("order");
+    if (
+      !requestedOrderId ||
+      !orders.some((order) => order.id === requestedOrderId)
+    )
+      return;
+    setSelectedId(requestedOrderId);
+    setFilter("ALL");
+    setSearchParams({}, { replace: true });
+  }, [orders, searchParams, setSearchParams]);
+
+  useEffect(() => {
     let live = true;
     if (!selectedId) {
       setDetail(null);
@@ -244,13 +277,15 @@ export default function OrdersPage() {
           return false;
         if (filter === "DRAFT" && o.status !== "DRAFT") return false;
         if (filter === "READY" && o.status !== "READY") return false;
+        if (filter === "PAID" && currentBill(o)?.status !== "PAID")
+          return false;
         if (
           filter === "FINISHED" &&
           !["CLOSED", "CANCELLED"].includes(o.status)
         )
           return false;
         const label =
-          `${o.customerName || ""} ${o.tableSession?.table?.name || ""} ${o.id} ${o.waiter?.firstName || ""}`.toLowerCase();
+          `${o.customerName || ""} ${o.tableSession?.table?.name || ""} ${o.id} ${orderCode(o.id)} ${o.waiter?.firstName || ""} ${currentBill(o)?.id ?? ""} ${(currentBill(o)?.payments ?? []).map((payment) => payment.id).join(" ")}`.toLowerCase();
         return label.includes(search.toLowerCase());
       }),
     [orders, filter, search],
@@ -304,7 +339,8 @@ export default function OrdersPage() {
     try {
       const stations = await orderCatalogApi.workstations(p.id);
       setReadyStations({
-        [p.id]: stations.some((s) => s.workstation.status === "ACTIVE"),
+        [p.id]:
+          stations.length === 1 && stations[0].workstation.status === "ACTIVE",
       });
     } catch {
       setReadyStations({ [p.id]: false });
@@ -393,7 +429,7 @@ export default function OrdersPage() {
     }
   };
 
-  const changeStatus = (status: OrderStatus) => {
+  const changeStatus = async (status: OrderStatus) => {
     if (!detail) return;
     if (
       status === "SENT" &&
@@ -403,11 +439,17 @@ export default function OrdersPage() {
       return;
     }
     if (
-      !window.confirm(
-        status === "SENT"
-          ? "¿Enviar este pedido a preparación? Después no podrás modificar sus productos."
-          : `¿Cambiar el estado a ${statusLabel[status]}?`,
-      )
+      !(await confirm({
+        title:
+          status === "SENT"
+            ? "Enviar a preparación"
+            : `Marcar como ${statusLabel[status].toLowerCase()}`,
+        description:
+          status === "SENT"
+            ? "Se generarán las comandas para las estaciones. Después del envío, cantidades y modificadores quedan bloqueados; las cancelaciones se resuelven desde preparación."
+            : `Confirma que el pedido puede pasar a «${statusLabel[status]}».`,
+        confirmLabel: status === "SENT" ? "Enviar pedido" : statusLabel[status],
+      }))
     )
       return;
     void run(
@@ -416,15 +458,57 @@ export default function OrdersPage() {
     );
   };
 
-  const cancel = () => {
+  const cancel = async () => {
     if (
       !detail ||
-      !window.confirm(
-        "¿Cancelar este pedido? Esta acción no se puede deshacer.",
-      )
+      !(await confirm({
+        title: "Cancelar pedido",
+        description:
+          "Se cancelarán las comandas que aún no estén listas. Esta acción no se puede deshacer.",
+        confirmLabel: "Cancelar pedido",
+        tone: "danger",
+      }))
     )
       return;
     void run(() => ordersApi.cancel(detail.id), "Pedido cancelado.");
+  };
+
+  const requestItemCancellation = async (item: OrderItem) => {
+    if (!detail) return;
+    const reason = await askInput({
+      title: "Solicitar cancelación de ítem",
+      description: `La estación revisará la solicitud para «${item.productNameSnapshot}». El ítem no se retirará de la cuenta hasta que preparación la apruebe.`,
+      label: "Motivo de cancelación",
+      placeholder: "Indica el motivo para cocina",
+      required: true,
+      multiline: true,
+      confirmLabel: "Enviar solicitud",
+      tone: "danger",
+    });
+    if (!reason?.trim()) return;
+    void run(
+      () =>
+        ordersApi.requestItemCancellation(detail.id, item.id, reason.trim()),
+      "Solicitud enviada a preparación.",
+    );
+  };
+
+  const amendItemNote = async (item: OrderItem) => {
+    if (!detail) return;
+    const note = await askInput({
+      title: "Actualizar nota para cocina",
+      description: `La nota nueva quedará visible en la comanda de «${item.productNameSnapshot}».`,
+      label: "Nota de preparación",
+      initialValue: item.notes ?? "",
+      placeholder: "Ej.: sin sal, salsa aparte…",
+      multiline: true,
+      confirmLabel: "Guardar nota",
+    });
+    if (note === null) return;
+    void run(
+      () => ordersApi.updateItem(detail.id, item.id, { notes: note }),
+      "Nota actualizada y visible para preparación.",
+    );
   };
 
   return (
@@ -528,6 +612,7 @@ export default function OrdersPage() {
               ["ACTIVE", "Activos"],
               ["DRAFT", "Borradores"],
               ["READY", "Listos"],
+              ["PAID", "Pagados"],
               ["FINISHED", "Finalizados"],
               ["ALL", "Todos"],
             ].map(([v, l]) => (
@@ -547,7 +632,7 @@ export default function OrdersPage() {
             />
             <input
               className={`${input} pl-10`}
-              placeholder="Buscar por mesa, cliente o pedido"
+              placeholder="Buscar mesa, cliente, código de pedido o cuenta"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -591,6 +676,19 @@ export default function OrdersPage() {
                       {statusLabel[o.status]}
                     </span>
                   </div>
+                  <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Pedido #{orderCode(o.id)}
+                  </p>
+                  {currentBill(o)?.status === "PAID" && (
+                    <p className="mt-2 inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                      Pagado · {money(currentBill(o)!.total)}
+                    </p>
+                  )}
+                  {directCashTotal(o) > 0 && (
+                    <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+                      Efectivo directo a caja · {money(directCashTotal(o))}
+                    </p>
+                  )}
                   <p className="mt-2 text-sm text-slate-500">
                     {o.items?.filter((i) => i.status !== "CANCELLED").length ||
                       0}{" "}
@@ -641,6 +739,9 @@ export default function OrdersPage() {
                       Creado el{" "}
                       {new Date(detail.createdAt).toLocaleString("es-CL")}
                     </p>
+                    <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                      Pedido #{orderCode(detail.id)}
+                    </p>
                   </div>
                   <span
                     className={`rounded-full px-3 py-1 text-sm font-medium ${statusStyle[detail.status]}`}
@@ -648,6 +749,32 @@ export default function OrdersPage() {
                     {statusLabel[detail.status]}
                   </span>
                 </div>
+                {currentBill(detail) && (
+                  <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-800">
+                          Cuenta #
+                          {currentBill(detail)!.id.slice(-6).toUpperCase()}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {currentBill(detail)!.status === "PAID"
+                            ? "Pagada"
+                            : currentBill(detail)!.status === "PARTIALLY_PAID"
+                              ? "Pago parcial"
+                              : "Pendiente de pago"}{" "}
+                          · {money(currentBill(detail)!.total)}
+                        </p>
+                      </div>
+                      {directCashTotal(detail) > 0 && (
+                        <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
+                          Efectivo directo a caja ·{" "}
+                          {money(directCashTotal(detail))}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
                 {detail.notes && (
                   <p className="mt-3 text-sm text-slate-600">
                     Nota general: {detail.notes}
@@ -754,6 +881,17 @@ export default function OrdersPage() {
                                 {money(itemTotal(i))}
                               </span>
                             </div>
+                            {i.cancellationStatus === "PENDING" && (
+                              <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                Cancelación pendiente de resolución por
+                                preparación: {i.cancellationReason}
+                              </p>
+                            )}
+                            {i.cancellationStatus === "REJECTED" && (
+                              <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                                Preparación rechazó la cancelación.
+                              </p>
+                            )}
                             {detail.status === "DRAFT" && (
                               <div className="mt-2 flex gap-3">
                                 <button
@@ -775,16 +913,24 @@ export default function OrdersPage() {
                                   className="flex items-center gap-1 text-xs text-red-600"
                                   disabled={busy}
                                   onClick={() => {
-                                    if (
-                                      window.confirm(
-                                        "¿Quitar este producto del pedido?",
+                                    void (async () => {
+                                      if (
+                                        await confirm({
+                                          title: "Quitar producto del pedido",
+                                          description: `Se quitará «${i.productNameSnapshot}» del borrador.`,
+                                          confirmLabel: "Quitar producto",
+                                          tone: "danger",
+                                        })
                                       )
-                                    )
-                                      void run(
-                                        () =>
-                                          ordersApi.removeItem(detail.id, i.id),
-                                        "Producto quitado.",
-                                      );
+                                        void run(
+                                          () =>
+                                            ordersApi.removeItem(
+                                              detail.id,
+                                              i.id,
+                                            ),
+                                          "Producto quitado.",
+                                        );
+                                    })();
                                   }}
                                 >
                                   <Trash2 size={13} />
@@ -792,6 +938,33 @@ export default function OrdersPage() {
                                 </button>
                               </div>
                             )}
+                            {["SENT", "IN_PROGRESS"].includes(detail.status) &&
+                              user &&
+                              (user.role === "OWNER" ||
+                                user.role === "ADMIN" ||
+                                user.role === "MANAGER" ||
+                                (user.role === "WAITER" &&
+                                  detail.waiterId === user.userId)) &&
+                              i.cancellationStatus !== "PENDING" &&
+                              i.cancellationStatus !== "APPROVED" &&
+                              i.status !== "CANCELLED" && (
+                                <div className="mt-2 flex gap-3">
+                                  <button
+                                    className="text-xs text-indigo-600"
+                                    disabled={busy}
+                                    onClick={() => amendItemNote(i)}
+                                  >
+                                    Actualizar nota para cocina
+                                  </button>
+                                  <button
+                                    className="text-xs text-red-600"
+                                    disabled={busy}
+                                    onClick={() => requestItemCancellation(i)}
+                                  >
+                                    Solicitar cancelación
+                                  </button>
+                                </div>
+                              )}
                           </div>
                         ))
                     )}
@@ -842,9 +1015,8 @@ export default function OrdersPage() {
                   )}
                   {detail.status === "SENT" && (
                     <p className="text-xs text-amber-700">
-                      La cocina debe aceptar y preparar las comandas. El estado
-                      del pedido puede requerir actualización manual mientras
-                      integramos Preparación.
+                      Cocina actualiza el pedido desde sus comandas. Cuando
+                      todas estén listas, podrás marcarlo como entregado.
                     </p>
                   )}
                   {["DELIVERED", "CLOSED"].includes(detail.status) && (

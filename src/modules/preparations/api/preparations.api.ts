@@ -26,6 +26,12 @@ export const preparationsApi = {
       },
     ),
 
+  resolveCancellation: (ticketId: string, ticketItemId: string, decision: "APPROVE" | "REJECT") =>
+    apiRequest(`/preparation-tickets/${q(ticketId)}/items/${q(ticketItemId)}/cancellation`, {
+      method: "PATCH",
+      body: JSON.stringify({ decision }),
+    }),
+
   workstations: (locationId: string) =>
     apiRequest<PreparationWorkstation[]>(
       `/locations/${q(locationId)}/workstations`,

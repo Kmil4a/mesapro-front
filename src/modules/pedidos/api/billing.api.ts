@@ -2,7 +2,7 @@ import { apiRequest } from "../../../api/client";
 
 export type BillStatus = "OPEN" | "PARTIALLY_PAID" | "PAID" | "UNPAID" | "VOID";
 export type PaymentMethod = "CASH" | "CARD" | "TRANSFER";
-export type PaymentStatus = "PENDING" | "CONFIRMED" | "REJECTED" | "CANCELLED";
+export type PaymentStatus = "PENDING" | "CONFIRMED" | "REJECTED" | "CANCELLED" | "REVERSED";
 
 export interface Payment {
   id: string;
@@ -12,6 +12,9 @@ export interface Payment {
   amount: number | string;
   reference: string | null;
   confirmedAt: string | null;
+  reversedAt?: string | null;
+  reversedBy?: string | null;
+  reversalReason?: string | null;
   createdAt: string;
 }
 
@@ -52,12 +55,12 @@ export const billingApi = {
       body: JSON.stringify({ tipAmount }),
     }),
 
-  createPayment: (billId: string, method: PaymentMethod, amount: number) =>
+  createPayment: (billId: string, method: PaymentMethod, amount: number, idempotencyKey: string) =>
     apiRequest<{ payment: Payment; bill: { id: string; total: number | string } }>(
       `/bills/${encodeURIComponent(billId)}/payments`,
       {
         method: "POST",
-        body: JSON.stringify({ method, amount }),
+        body: JSON.stringify({ method, amount, idempotencyKey }),
       },
     ),
 
@@ -72,5 +75,11 @@ export const billingApi = {
         method: "PATCH",
         body: JSON.stringify({ status }),
       },
+    ),
+
+  reversePayment: (billId: string, paymentId: string, reason: string) =>
+    apiRequest<Payment>(
+      `/bills/${encodeURIComponent(billId)}/payments/${encodeURIComponent(paymentId)}/reverse`,
+      { method: "POST", body: JSON.stringify({ reason }) },
     ),
 };

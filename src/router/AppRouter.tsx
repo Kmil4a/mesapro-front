@@ -1,7 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { LoginPage } from "../pages/LoginPage";
-import { ProtectedRoute } from "../auth/ProtectedRoute";
+import { ProtectedRoute, RoleProtectedRoute } from "../auth/ProtectedRoute";
 import { AppLayout } from "../components/layout/AppLayout";
 import { DashboardPage } from "../pages/DashboardPage";
 import MesasPage from "../modules/mesas/pages/MesasPage";
@@ -20,15 +20,15 @@ export function AppRouter() {
 
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/mesas" element={<MesasPage />} />
-          <Route path="/pedidos" element={<OrdersPage />} />
-          <Route path="/preparacion" element={<PreparationsPage />} />
-          <Route path="/caja" element={<CajaPage />} />
-          <Route path="/productos" element={<CatalogoPage />} />
-          <Route path="/reportes" element={<DailyClosePage />} />
-          <Route path="/usuarios" element={<UsersPage />} />
-          <Route path="/configuracion" element={<ConfigurationPage />} />
+          <Route element={<RoleProtectedRoute path="/dashboard" />}><Route path="/dashboard" element={<DashboardPage />} /></Route>
+          <Route element={<RoleProtectedRoute path="/mesas" />}><Route path="/mesas" element={<MesasPage />} /></Route>
+          <Route element={<RoleProtectedRoute path="/pedidos" />}><Route path="/pedidos" element={<OrdersPage />} /></Route>
+          <Route element={<RoleProtectedRoute path="/preparacion" />}><Route path="/preparacion" element={<PreparationsPage />} /></Route>
+          <Route element={<RoleProtectedRoute path="/caja" />}><Route path="/caja" element={<CajaPage />} /></Route>
+          <Route element={<RoleProtectedRoute path="/productos" />}><Route path="/productos" element={<CatalogoPage />} /></Route>
+          <Route element={<RoleProtectedRoute path="/reportes" />}><Route path="/reportes" element={<DailyClosePage />} /></Route>
+          <Route element={<RoleProtectedRoute path="/usuarios" />}><Route path="/usuarios" element={<UsersPage />} /></Route>
+          <Route element={<RoleProtectedRoute path="/configuracion" />}><Route path="/configuracion" element={<ConfigurationPage />} /></Route>
         </Route>
       </Route>
 

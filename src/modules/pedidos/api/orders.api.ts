@@ -44,6 +44,12 @@ export const ordersApi = {
       method: "DELETE",
     }),
 
+  requestItemCancellation: (id: string, itemId: string, reason: string) =>
+    apiRequest<OrderItem>(`/orders/${q(id)}/items/${q(itemId)}/cancellation-request`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+
   status: (id: string, status: OrderStatus) =>
     apiRequest<{ order: Order; preparationTickets: unknown[] }>(
       `/orders/${q(id)}/status`,

@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useLocation } from "../../../context/LocationContext";
 import { useAuth } from "../../../auth/AuthContext";
+import { useAppDialog } from "../../../components/ui/AppDialog";
 import {
   categoriesApi,
   workstationsApi,
@@ -28,25 +29,11 @@ import type {
 } from "../types";
 
 type Tab =
-  | "Productos"
-  | "Categorías"
-  | "Modificadores"
-  | "Combos"
-  | "Estaciones";
+  "Productos" | "Categorías" | "Modificadores" | "Combos" | "Estaciones";
 type Kind =
-  | "category"
-  | "workstation"
-  | "product"
-  | "group"
-  | "modifier"
-  | "combo";
+  "category" | "workstation" | "product" | "group" | "modifier" | "combo";
 type CatalogRow =
-  | Category
-  | Workstation
-  | Product
-  | ModifierGroup
-  | Modifier
-  | Combo;
+  Category | Workstation | Product | ModifierGroup | Modifier | Combo;
 type Edit = { kind: Kind; id?: string } | null;
 const money = (value: number | string) =>
   new Intl.NumberFormat("es-CL", {
@@ -135,6 +122,7 @@ function isComboRow(row: CatalogRow): row is Combo {
 }
 
 export default function CatalogoPage() {
+  const { confirm } = useAppDialog();
   const { user } = useAuth();
   const {
     locations,
@@ -359,14 +347,12 @@ export default function CatalogoPage() {
           id = created.id;
         }
         if (id) {
-          for (const station of stationIds.filter(
-            (x) => !originalStationIds.includes(x),
-          ))
-            await productWorkstationsApi.create(id, station);
-          for (const station of originalStationIds.filter(
-            (x) => !stationIds.includes(x),
-          ))
-            await productWorkstationsApi.remove(id, station);
+          const nextStation = stationIds[0];
+          const currentStation = originalStationIds[0];
+          if (nextStation && nextStation !== currentStation)
+            await productWorkstationsApi.create(id, nextStation);
+          else if (!nextStation && currentStation)
+            await productWorkstationsApi.remove(id, currentStation);
         }
       }
       if (edit.kind === "group") {
@@ -416,9 +402,12 @@ export default function CatalogoPage() {
   }
   async function deactivate(kind: Kind, id: string, name: string) {
     if (
-      !window.confirm(
-        `¿Desactivar «${name}»? Esta acción lo ocultará de los listados activos.`,
-      )
+      !(await confirm({
+        title: "Desactivar elemento",
+        description: `¿Desactivar «${name}»? Se ocultará de los listados activos y no estará disponible para nuevas ventas.`,
+        confirmLabel: "Desactivar",
+        tone: "danger",
+      }))
     )
       return;
     setBusy(true);
@@ -479,7 +468,17 @@ export default function CatalogoPage() {
     }
   }
   async function removeItem(itemId: string) {
-    if (!comboId || !window.confirm("¿Quitar este producto del combo?")) return;
+    if (
+      !comboId ||
+      !(await confirm({
+        title: "Quitar producto del combo",
+        description:
+          "El producto dejará de formar parte de este combo para las próximas ventas.",
+        confirmLabel: "Quitar producto",
+        tone: "danger",
+      }))
+    )
+      return;
     setBusy(true);
     setError("");
     try {
@@ -826,33 +825,37 @@ export default function CatalogoPage() {
                 </Field>
                 <fieldset className="space-y-2">
                   <legend className="text-sm font-medium text-slate-700">
-                    Estaciones responsables
+                    Estación responsable
                   </legend>
                   {workstations.length === 0 ? (
                     <p className="text-sm text-amber-700">
                       Crea estaciones en la pestaña Estaciones.
                     </p>
                   ) : (
-                    workstations.map((w) => (
-                      <label
-                        key={w.id}
-                        className="flex items-center gap-2 text-sm"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={stationIds.includes(w.id)}
-                          onChange={(e) =>
-                            setStationIds((prev) =>
-                              e.target.checked
-                                ? [...prev, w.id]
-                                : prev.filter((id) => id !== w.id),
-                            )
-                          }
-                        />
-                        {w.name}
-                      </label>
-                    ))
+                    <select
+                      className={inputClass}
+                      value={stationIds[0] ?? ""}
+                      onChange={(e) =>
+                        setStationIds(e.target.value ? [e.target.value] : [])
+                      }
+                    >
+                      <option value="">Selecciona una estación</option>
+                      {workstations
+                        .filter(
+                          (w) =>
+                            w.status === "ACTIVE" || stationIds.includes(w.id),
+                        )
+                        .map((w) => (
+                          <option key={w.id} value={w.id}>
+                            {w.name}
+                          </option>
+                        ))}
+                    </select>
                   )}
+                  <p className="text-xs text-slate-500">
+                    Cada producto se prepara en una sola estación. Cambiarla
+                    actualiza la asignación para pedidos nuevos.
+                  </p>
                 </fieldset>
               </>
             )}

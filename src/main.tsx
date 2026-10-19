@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider } from "./auth/AuthContext";
 import { AppRouter } from "./router/AppRouter";
 import { LocationProvider } from "./context/LocationContext";
+import { AppDialogProvider } from "./components/ui/AppDialog";
 
 import "./index.css";
 
@@ -17,7 +18,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <BrowserRouter>
         <AuthProvider>
           <LocationProvider>
-            <AppRouter />
+            <AppDialogProvider>
+              <AppRouter />
+            </AppDialogProvider>
           </LocationProvider>
         </AuthProvider>
       </BrowserRouter>

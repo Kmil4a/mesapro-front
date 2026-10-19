@@ -8,11 +8,7 @@ export type OrderStatus =
   | "CLOSED"
   | "CANCELLED";
 export type OrderItemStatus =
-  | "PENDING"
-  | "IN_PROGRESS"
-  | "READY"
-  | "DELIVERED"
-  | "CANCELLED";
+  "PENDING" | "IN_PROGRESS" | "READY" | "DELIVERED" | "CANCELLED";
 export interface OrderModifier {
   id: string;
   orderItemId: string;
@@ -29,6 +25,8 @@ export interface OrderItem {
   quantity: number;
   notes: string | null;
   status: OrderItemStatus;
+  cancellationStatus?: "NONE" | "PENDING" | "APPROVED" | "REJECTED";
+  cancellationReason?: string | null;
   modifiers?: OrderModifier[];
 }
 export interface Order {
@@ -46,6 +44,20 @@ export interface Order {
   tableSession?: { id: string; table?: { id: string; name: string } } | null;
   waiter?: { id: string; firstName: string; lastName: string } | null;
   items: OrderItem[];
+  billOrders?: Array<{
+    bill: {
+      id: string;
+      status: "OPEN" | "PARTIALLY_PAID" | "PAID" | "UNPAID" | "VOID";
+      total: number | string;
+      payments: Array<{
+        id: string;
+        method: "CASH" | "CARD" | "TRANSFER";
+        status: "PENDING" | "CONFIRMED" | "REJECTED" | "CANCELLED" | "REVERSED";
+        amount: number | string;
+        cashHandover: { id: string; status: string } | null;
+      }>;
+    };
+  }>;
 }
 export interface CreateOrderDto {
   locationId: string;

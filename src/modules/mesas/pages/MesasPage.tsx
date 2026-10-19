@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "../../../auth/AuthContext";
+import { useAppDialog } from "../../../components/ui/AppDialog";
 import { useLocation } from "../../../context/LocationContext";
 import { membershipsApi, type Membership } from "../../../api/memberships";
 import { tablesApi } from "../api/tables.api";
@@ -33,6 +34,7 @@ function getErrorMessage(error: unknown) {
 }
 
 export default function MesasPage() {
+  const { confirm } = useAppDialog();
   const { user } = useAuth();
   const {
     locations,
@@ -59,6 +61,10 @@ export default function MesasPage() {
   const [name, setName] = useState("");
   const [capacity, setCapacity] = useState("4");
   const [waiterId, setWaiterId] = useState("");
+  const [transferSession, setTransferSession] = useState<TableSession | null>(
+    null,
+  );
+  const [transferWaiterId, setTransferWaiterId] = useState("");
 
   const isManager = !!user && canManageTables.includes(user.role);
 
@@ -66,10 +72,12 @@ export default function MesasPage() {
     return memberships
       .filter(
         (membership) =>
-          membership.status === "ACTIVE" && membership.role === "WAITER",
+          membership.status === "ACTIVE" &&
+          membership.role === "WAITER" &&
+          membership.locationId === locationId,
       )
       .map((membership) => membership.user);
-  }, [memberships]);
+  }, [memberships, locationId]);
 
   const activeSessions = useMemo(() => {
     return new Map(sessions.map((session) => [session.tableId, session]));
@@ -79,16 +87,22 @@ export default function MesasPage() {
     activeSessions.has(table.id),
   ).length;
 
-  const available = tables.length - occupied;
+  const available = tables.filter(
+    (table) =>
+      !activeSessions.has(table.id) && table.operationalStatus === "AVAILABLE",
+  ).length;
 
-  const loadTables = useCallback(async (id: string) => {
-    const [tableData, sessionData] = await Promise.all([
-      tablesApi.getAll(id),
-      tableSessionsApi.getOpenByLocation(id),
-    ]);
+  const loadTables = useCallback(
+    async (id: string) => {
+      const [tableData, sessionData] = await Promise.all([
+        tablesApi.getAll(id),
+        tableSessionsApi.getOpenByLocation(id),
+      ]);
 
-    return { tableData, sessionData };
-  }, []);
+      return { tableData, sessionData };
+    },
+    [locationId],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -282,10 +296,13 @@ export default function MesasPage() {
     table: RestaurantTable,
     session: TableSession,
   ) {
-    const confirmed = window.confirm(
-      `¿Deseas cerrar la atención de ${table.name}?\n\n` +
-        "Comprueba antes que no existan pedidos ni cuentas pendientes.",
-    );
+    const confirmed = await confirm({
+      title: `Cerrar atención de ${table.name}`,
+      description:
+        "Comprueba que no queden pedidos ni cuentas pendientes antes de liberar la mesa.",
+      confirmLabel: "Cerrar atención",
+      tone: "danger",
+    });
 
     if (!confirmed) return;
 
@@ -304,13 +321,44 @@ export default function MesasPage() {
     }
   }
 
+  async function handleTransferSession(event: FormEvent) {
+    event.preventDefault();
+    if (!transferSession || !transferWaiterId) return;
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      const target = waiters.find((waiter) => waiter.id === transferWaiterId);
+      await tableSessionsApi.transfer(transferSession.id, transferWaiterId);
+      setTransferSession(null);
+      setTransferWaiterId("");
+      setSuccess(
+        `La mesa fue transferida a ${target?.firstName ?? "el mesero seleccionado"}.`,
+      );
+      await refresh();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleDeactivate(table: RestaurantTable) {
     if (activeSessions.has(table.id)) {
       setError("No puedes desactivar una mesa ocupada.");
       return;
     }
 
-    if (!window.confirm(`¿Desactivar ${table.name}?`)) return;
+    if (
+      !(await confirm({
+        title: `Desactivar ${table.name}`,
+        description:
+          "La mesa dejará de aparecer en la operación. Puedes volver a habilitarla desde la administración.",
+        confirmLabel: "Desactivar mesa",
+        tone: "danger",
+      }))
+    )
+      return;
 
     setSaving(true);
     setError("");
@@ -319,6 +367,24 @@ export default function MesasPage() {
     try {
       await tablesApi.deactivate(table.id);
       setSuccess(`${table.name} fue desactivada.`);
+      await refresh();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleOperationalStatus(
+    table: RestaurantTable,
+    operationalStatus: "AVAILABLE" | "RESERVED" | "OUT_OF_SERVICE",
+  ) {
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      await tablesApi.updateOperationalStatus(table.id, operationalStatus);
+      setSuccess(`Disponibilidad de ${table.name} actualizada.`);
       await refresh();
     } catch (err) {
       setError(getErrorMessage(err));
@@ -435,6 +501,15 @@ export default function MesasPage() {
           {tables.map((table) => {
             const session = activeSessions.get(table.id);
             const isOccupied = !!session;
+            const operationalStatus = isOccupied
+              ? "OCCUPIED"
+              : table.operationalStatus;
+            const tableStatusLabel: Record<string, string> = {
+              AVAILABLE: "Disponible",
+              OCCUPIED: "Ocupada",
+              RESERVED: "Reservada",
+              OUT_OF_SERVICE: "Fuera de servicio",
+            };
 
             return (
               <div
@@ -444,9 +519,11 @@ export default function MesasPage() {
                 <div className="flex items-start justify-between">
                   <div
                     className={`rounded-xl p-3 ${
-                      isOccupied
+                      operationalStatus === "OCCUPIED"
                         ? "bg-amber-50 text-amber-600"
-                        : "bg-green-50 text-green-600"
+                        : operationalStatus === "AVAILABLE"
+                          ? "bg-green-50 text-green-600"
+                          : "bg-slate-100 text-slate-600"
                     }`}
                   >
                     <Table2 size={25} />
@@ -454,12 +531,14 @@ export default function MesasPage() {
 
                   <span
                     className={`rounded-full px-3 py-1 text-xs font-medium ${
-                      isOccupied
+                      operationalStatus === "OCCUPIED"
                         ? "bg-amber-100 text-amber-700"
-                        : "bg-green-100 text-green-700"
+                        : operationalStatus === "AVAILABLE"
+                          ? "bg-green-100 text-green-700"
+                          : "bg-slate-100 text-slate-700"
                     }`}
                   >
-                    {isOccupied ? "Ocupada" : "Disponible"}
+                    {tableStatusLabel[operationalStatus] ?? operationalStatus}
                   </span>
                 </div>
 
@@ -479,14 +558,37 @@ export default function MesasPage() {
 
                 <div className="mt-5 space-y-2">
                   {isOccupied && session ? (
-                    <button
-                      disabled={saving}
-                      onClick={() => void handleCloseSession(table, session)}
-                      className="w-full rounded-lg border border-amber-300 px-3 py-2.5 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
-                    >
-                      Cerrar atención
-                    </button>
-                  ) : (
+                    <>
+                      {isManager && (
+                        <button
+                          disabled={
+                            saving ||
+                            waiters.filter(
+                              (waiter) => waiter.id !== session.waiterId,
+                            ).length === 0
+                          }
+                          onClick={() => {
+                            setTransferSession(session);
+                            setTransferWaiterId(
+                              waiters.find(
+                                (waiter) => waiter.id !== session.waiterId,
+                              )?.id ?? "",
+                            );
+                          }}
+                          className="w-full rounded-lg border border-indigo-300 px-3 py-2.5 text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+                        >
+                          Transferir responsable
+                        </button>
+                      )}
+                      <button
+                        disabled={saving}
+                        onClick={() => void handleCloseSession(table, session)}
+                        className="w-full rounded-lg border border-amber-300 px-3 py-2.5 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                      >
+                        Cerrar atención
+                      </button>
+                    </>
+                  ) : operationalStatus === "AVAILABLE" ? (
                     <button
                       disabled={saving}
                       onClick={() => showOpen(table)}
@@ -494,26 +596,55 @@ export default function MesasPage() {
                     >
                       Abrir mesa
                     </button>
+                  ) : (
+                    <p className="rounded-lg bg-slate-50 px-3 py-2.5 text-center text-sm text-slate-500">
+                      No disponible para abrir
+                    </p>
                   )}
 
                   {isManager && (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => showEdit(table)}
-                        disabled={saving || isOccupied}
-                        className="flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-                      >
-                        <Pencil size={15} />
-                        Editar
-                      </button>
-                      <button
-                        onClick={() => void handleDeactivate(table)}
-                        disabled={saving || isOccupied}
-                        className="flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-40"
-                      >
-                        <Trash2 size={15} />
-                        Desactivar
-                      </button>
+                    <div className="space-y-2">
+                      {!isOccupied && (
+                        <label className="block text-xs font-medium text-slate-500">
+                          Disponibilidad operativa
+                          <select
+                            value={table.operationalStatus}
+                            disabled={saving}
+                            onChange={(event) =>
+                              void handleOperationalStatus(
+                                table,
+                                event.target.value as
+                                  "AVAILABLE" | "RESERVED" | "OUT_OF_SERVICE",
+                              )
+                            }
+                            className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                          >
+                            <option value="AVAILABLE">Disponible</option>
+                            <option value="RESERVED">Reservada</option>
+                            <option value="OUT_OF_SERVICE">
+                              Fuera de servicio
+                            </option>
+                          </select>
+                        </label>
+                      )}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => showEdit(table)}
+                          disabled={saving || isOccupied}
+                          className="flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                        >
+                          <Pencil size={15} />
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => void handleDeactivate(table)}
+                          disabled={saving || isOccupied}
+                          className="flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-40"
+                        >
+                          <Trash2 size={15} />
+                          Desactivar
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -660,6 +791,53 @@ export default function MesasPage() {
               </form>
             )}
           </div>
+        </div>
+      )}
+
+      {transferSession && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <form
+            onSubmit={handleTransferSession}
+            className="w-full max-w-md space-y-4 rounded-2xl bg-white p-6 shadow-xl"
+          >
+            <h3 className="text-lg font-semibold">
+              Transferir responsabilidad
+            </h3>
+            <p className="text-sm text-slate-600">
+              Los pedidos activos de esta sesión también se asignarán al nuevo
+              mesero. La transferencia quedará auditada.
+            </p>
+            <select
+              className="w-full rounded-lg border px-3 py-3"
+              value={transferWaiterId}
+              onChange={(e) => setTransferWaiterId(e.target.value)}
+              required
+            >
+              {waiters
+                .filter((waiter) => waiter.id !== transferSession.waiterId)
+                .map((waiter) => (
+                  <option key={waiter.id} value={waiter.id}>
+                    {waiter.firstName} {waiter.lastName}
+                  </option>
+                ))}
+            </select>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                className="flex-1 rounded-lg border py-3"
+                disabled={saving}
+                onClick={() => setTransferSession(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                className="flex-1 rounded-lg bg-indigo-600 py-3 font-medium text-white disabled:opacity-50"
+                disabled={saving || !transferWaiterId}
+              >
+                {saving ? "Transfiriendo…" : "Confirmar transferencia"}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>

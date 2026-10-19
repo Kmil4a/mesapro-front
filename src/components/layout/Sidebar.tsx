@@ -1,37 +1,7 @@
 import { NavLink } from "react-router-dom";
-import {
-  LayoutDashboard,
-  Table2,
-  ClipboardList,
-  ChefHat,
-  Wallet,
-  BarChart3,
-  Package,
-  Users,
-  Settings,
-  UtensilsCrossed,
-  type LucideIcon,
-} from "lucide-react";
 import type { UserRole } from "../../auth/types";
-
-interface MenuItem {
-  label: string;
-  path: string;
-  icon: LucideIcon;
-  roles?: UserRole[];
-}
-
-const menu: MenuItem[] = [
-  { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
-  { label: "Mesas", path: "/mesas", icon: Table2 },
-  { label: "Pedidos", path: "/pedidos", icon: ClipboardList },
-  { label: "Preparación", path: "/preparacion", icon: ChefHat },
-  { label: "Caja", path: "/caja", icon: Wallet },
-  { label: "Productos", path: "/productos", icon: Package },
-  { label: "Reportes", path: "/reportes", icon: BarChart3, roles: ["OWNER", "ADMIN", "MANAGER"] },
-  { label: "Usuarios", path: "/usuarios", icon: Users, roles: ["OWNER", "ADMIN", "MANAGER"] },
-  { label: "Configuración", path: "/configuracion", icon: Settings, roles: ["OWNER", "ADMIN"] },
-];
+import { modulesForRole } from "../../auth/moduleAccess";
+import { UtensilsCrossed } from "lucide-react";
 
 export default function Sidebar({ onNavigate, role }: { onNavigate?: () => void; role?: UserRole }) {
   return (
@@ -42,7 +12,7 @@ export default function Sidebar({ onNavigate, role }: { onNavigate?: () => void;
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto p-3">
-        {menu.filter((item) => !item.roles || (role && item.roles.includes(role))).map(({ label, path, icon: Icon }) => (
+        {modulesForRole(role).map(({ label, path, icon: Icon }) => (
           <NavLink
             key={path}
             to={path}

@@ -1,4 +1,6 @@
 export type TableStatus = "ACTIVE" | "INACTIVE";
+export type TableOperationalStatus =
+  "AVAILABLE" | "OCCUPIED" | "RESERVED" | "OUT_OF_SERVICE";
 
 export type TableSessionStatus = "OPEN" | "CLOSING" | "CLOSED" | "CANCELLED";
 
@@ -8,6 +10,7 @@ export interface RestaurantTable {
   name: string;
   capacity: number | null;
   status: TableStatus;
+  operationalStatus: TableOperationalStatus;
   createdAt: string;
   updatedAt: string;
 }

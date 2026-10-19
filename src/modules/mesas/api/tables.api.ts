@@ -44,4 +44,17 @@ export const tablesApi = {
       },
     );
   },
+
+  updateOperationalStatus(
+    id: string,
+    operationalStatus: "AVAILABLE" | "RESERVED" | "OUT_OF_SERVICE",
+  ) {
+    return apiRequest<RestaurantTable>(
+      `/restaurant-tables/${encodeURIComponent(id)}/operational-status`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ operationalStatus }),
+      },
+    );
+  },
 };

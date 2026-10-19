@@ -1,14 +1,34 @@
 import { apiRequest } from "../../../api/client";
 
 export type CashSessionStatus = "OPEN" | "CLOSED";
-export type CashHandoverStatus = "PENDING" | "CONFIRMED" | "REJECTED";
+export type CashHandoverStatus =
+  "PENDING" | "CONFIRMED" | "REJECTED" | "CANCELLED";
 
 export interface CashMovement {
   id: string;
-  type: "SALE" | "HANDOVER" | "WITHDRAWAL" | "DEPOSIT" | "ADJUSTMENT";
+  type:
+    "SALE" | "HANDOVER" | "REFUND" | "WITHDRAWAL" | "DEPOSIT" | "ADJUSTMENT";
   amount: number | string;
   reason: string | null;
   createdAt: string;
+  reference: string | null;
+  directPayment?: {
+    id: string;
+    method: string;
+    status: string;
+    amount: number | string;
+    bill: {
+      id: string;
+      orders: Array<{
+        order: {
+          id: string;
+          type: "DINE_IN" | "TAKEAWAY";
+          customerName: string | null;
+          tableSession: { table: { name: string } } | null;
+        };
+      }>;
+    };
+  } | null;
 }
 
 export interface CashHandover {
@@ -25,7 +45,7 @@ export interface LocationPaymentRecord {
   id: string;
   amount: number | string;
   method: "CASH" | "CARD" | "TRANSFER";
-  status: "PENDING" | "CONFIRMED" | "REJECTED" | "CANCELLED";
+  status: "PENDING" | "CONFIRMED" | "REJECTED" | "CANCELLED" | "REVERSED";
   createdAt: string;
   billId: string;
   cashHandover?: {
@@ -59,7 +79,9 @@ export const cashApi = {
     >(`/bills?locationId=${encodeURIComponent(locationId)}`);
 
     return bills
-      .flatMap((bill) => bill.payments.map((payment) => ({ ...payment, billId: bill.id })))
+      .flatMap((bill) =>
+        bill.payments.map((payment) => ({ ...payment, billId: bill.id })),
+      )
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .slice(0, 30);
   },

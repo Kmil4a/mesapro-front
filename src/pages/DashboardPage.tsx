@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "../auth/AuthContext";
+import { hasModuleAccess } from "../auth/moduleAccess";
 
 const modules = [
   {
@@ -51,7 +52,7 @@ export function DashboardPage() {
       </div>
 
       <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-        {modules.map(({ title, description, path, icon: Icon }) => (
+        {modules.filter(({ path }) => hasModuleAccess(path, user?.role)).map(({ title, description, path, icon: Icon }) => (
           <Link
             key={path}
             to={path}

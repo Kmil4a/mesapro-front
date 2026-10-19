@@ -3,6 +3,20 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { LockKeyhole, Mail, UtensilsCrossed } from "lucide-react";
 
 import { useAuth } from "../auth/AuthContext";
+import { hasModuleAccess, homeForRole } from "../auth/moduleAccess";
+import { ApiRequestError } from "../api/client";
+
+function authErrorMessage(error: unknown) {
+  if (error instanceof ApiRequestError) {
+    if (error.statusCode === 401) return "Correo o contraseña incorrectos.";
+    if (error.statusCode === 403) return error.message || "Tu usuario no tiene una membresía activa. Contacta al administrador del negocio.";
+    if (error.statusCode === 429) return "Se alcanzó el límite de intentos. Espera unos minutos antes de volver a intentarlo.";
+    if (error.statusCode && error.statusCode >= 500) return "El servicio de autenticación no está disponible temporalmente. Inténtalo más tarde.";
+    return error.message;
+  }
+  if (error instanceof TypeError) return "No se pudo conectar con el servidor. Revisa tu conexión e inténtalo nuevamente.";
+  return "No fue posible iniciar sesión. Inténtalo nuevamente.";
+}
 
 export function LoginPage() {
   const { login } = useAuth();
@@ -20,7 +34,7 @@ export function LoginPage() {
     setSubmitting(true);
 
     try {
-      await login(email, password);
+      const authenticatedUser = await login(email, password);
 
       const from = (
         location.state as {
@@ -28,13 +42,14 @@ export function LoginPage() {
         } | null
       )?.from?.pathname;
 
-      navigate(from && from !== "/login" ? from : "/dashboard", {
+      const destination = from && from !== "/login" && hasModuleAccess(from, authenticatedUser.role)
+        ? from
+        : homeForRole(authenticatedUser.role);
+      navigate(destination, {
         replace: true,
       });
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "No fue posible iniciar sesión",
-      );
+      setError(authErrorMessage(err));
     } finally {
       setSubmitting(false);
     }

@@ -20,6 +20,8 @@ export interface PreparationOrderItem {
   quantity: number;
   notes: string | null;
   status?: string;
+  cancellationStatus?: "NONE" | "PENDING" | "APPROVED" | "REJECTED";
+  cancellationReason?: string | null;
   product?: { id: string; name: string };
   modifiers?: PreparationModifier[];
 }

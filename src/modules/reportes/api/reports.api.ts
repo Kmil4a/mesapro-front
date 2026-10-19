@@ -1,4 +1,4 @@
-import { apiRequest } from '../../../api/client';
+import { apiRequest } from "../../../api/client";
 
 export interface DailyCloseReport {
   date: string;
@@ -15,10 +15,24 @@ export interface DailyCloseReport {
   };
   payments: {
     registeredByStatus: Array<{
-      method: string; status: string; count: number; amount: number | string;
+      method: string;
+      status: string;
+      count: number;
+      amount: number | string;
     }>;
-    confirmedByMethod: Array<{ method: string; count: number; amount: number | string }>;
+    confirmedByMethod: Array<{
+      method: string;
+      count: number;
+      amount: number | string;
+    }>;
     confirmedTotal: number | string;
+    reversedByMethod: Array<{
+      method: string;
+      count: number;
+      amount: number | string;
+    }>;
+    reversedTotal: number | string;
+    netConfirmedTotal: number | string;
   };
   cash: {
     closedCount: number;
@@ -39,9 +53,26 @@ export interface DailyCloseReport {
   };
 }
 
+export interface ProductRankingReport {
+  date: string;
+  timeZone: string;
+  location: { id: string; name: string; currency: string };
+  ranking: Array<{
+    productId: string;
+    productName: string;
+    unitsSold: number;
+    orderLines: number;
+  }>;
+  basis: string;
+}
+
 export const reportsApi = {
   dailyClose: (locationId: string, date: string) =>
     apiRequest<DailyCloseReport>(
       `/reports/daily-close?locationId=${encodeURIComponent(locationId)}&date=${encodeURIComponent(date)}`,
+    ),
+  productRanking: (locationId: string, date: string) =>
+    apiRequest<ProductRankingReport>(
+      `/reports/product-ranking?locationId=${encodeURIComponent(locationId)}&date=${encodeURIComponent(date)}`,
     ),
 };
