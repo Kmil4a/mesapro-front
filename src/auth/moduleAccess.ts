@@ -1,6 +1,5 @@
 import {
   BarChart3,
-  ChefHat,
   ClipboardList,
   LayoutDashboard,
   Package,
@@ -26,10 +25,9 @@ const operationalReaders: UserRole[] = [
 ];
 
 export const appModules: AppModule[] = [
-  { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, roles: ["OWNER", "ADMIN", "MANAGER", "WAITER", "KITCHEN", "CASHIER"] },
+  { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, roles: ["OWNER", "ADMIN", "MANAGER", "WAITER", "CASHIER"] },
   { label: "Mesas", path: "/mesas", icon: Table2, roles: operationalReaders },
   { label: "Pedidos", path: "/pedidos", icon: ClipboardList, roles: ["OWNER", "ADMIN", "MANAGER", "WAITER", "CASHIER"] },
-  { label: "Preparación", path: "/preparacion", icon: ChefHat, roles: ["OWNER", "ADMIN", "MANAGER", "KITCHEN"] },
   { label: "Caja", path: "/caja", icon: Wallet, roles: ["OWNER", "ADMIN", "MANAGER", "CASHIER"] },
   { label: "Catalogo", path: "/productos", icon: Package, roles: operationalReaders },
   { label: "Reportes", path: "/reportes", icon: BarChart3, roles: managementRoles },
@@ -44,7 +42,7 @@ export function modulesForRole(role?: UserRole | null) {
 export function homeForRole(role?: UserRole | null) {
   switch (role) {
     case "WAITER": return "/mesas";
-    case "KITCHEN": return "/preparacion";
+    case "KITCHEN": return "/mesas";
     case "CASHIER": return "/caja";
     default: return "/dashboard";
   }

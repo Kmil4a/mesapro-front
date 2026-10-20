@@ -7,7 +7,6 @@ import { DashboardPage } from "../pages/DashboardPage";
 import MesasPage from "../modules/mesas/pages/MesasPage";
 import CatalogoPage from "../modules/catalogo/pages/CatalogoPage";
 import OrdersPage from "../modules/pedidos/pages/OrdersPage";
-import PreparationsPage from "../modules/preparations/pages/PreparationsPage";
 import CajaPage from "../modules/caja/pages/CajaPage";
 import DailyClosePage from "../modules/reportes/pages/DailyClosePage";
 import UsersPage from "../modules/usuarios/pages/UsersPage";
@@ -23,7 +22,6 @@ export function AppRouter() {
           <Route element={<RoleProtectedRoute path="/dashboard" />}><Route path="/dashboard" element={<DashboardPage />} /></Route>
           <Route element={<RoleProtectedRoute path="/mesas" />}><Route path="/mesas" element={<MesasPage />} /></Route>
           <Route element={<RoleProtectedRoute path="/pedidos" />}><Route path="/pedidos" element={<OrdersPage />} /></Route>
-          <Route element={<RoleProtectedRoute path="/preparacion" />}><Route path="/preparacion" element={<PreparationsPage />} /></Route>
           <Route element={<RoleProtectedRoute path="/caja" />}><Route path="/caja" element={<CajaPage />} /></Route>
           <Route element={<RoleProtectedRoute path="/productos" />}><Route path="/productos" element={<CatalogoPage />} /></Route>
           <Route element={<RoleProtectedRoute path="/reportes" />}><Route path="/reportes" element={<DailyClosePage />} /></Route>

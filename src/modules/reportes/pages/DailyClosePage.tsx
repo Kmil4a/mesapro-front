@@ -367,7 +367,11 @@ export default function DailyClosePage() {
                         <td className="py-3 font-medium">
                           {product.productName}
                         </td>
-                        <td className="py-3">{product.unitsSold}</td>
+                        <td className="py-3">
+                          {new Intl.NumberFormat("es-CL", {
+                            maximumFractionDigits: 3,
+                          }).format(product.unitsSold)}
+                        </td>
                         <td className="py-3">{product.orderLines}</td>
                       </tr>
                     ))}

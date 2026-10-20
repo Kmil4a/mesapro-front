@@ -13,9 +13,7 @@ import {
   ArrowLeft,
   Trash2,
   Send,
-  CheckCircle2,
   X,
-  Minus,
   ClipboardList,
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
@@ -48,10 +46,10 @@ const message = (e: unknown) =>
   e instanceof Error ? e.message : "Ocurrió un error inesperado";
 
 const statusLabel: Record<OrderStatus, string> = {
-  DRAFT: "Borrador",
-  SENT: "Enviado",
-  IN_PROGRESS: "En preparación",
-  READY: "Listo",
+  DRAFT: "Pendiente de impresión",
+  SENT: "Impreso · pendiente de entrega",
+  IN_PROGRESS: "Impreso · pendiente de entrega",
+  READY: "Entregado",
   DELIVERED: "Entregado",
   CLOSED: "Cerrado",
   CANCELLED: "Cancelado",
@@ -71,6 +69,57 @@ function orderCode(id: string) {
   return id.slice(-6).toUpperCase();
 }
 
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) =>
+    ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    })[character]!,
+  );
+}
+
+function printableOrder(data: Awaited<ReturnType<typeof ordersApi.dispatch>>) {
+  const quantity = (value: string) =>
+    new Intl.NumberFormat("es-CL", { maximumFractionDigits: 3 }).format(Number(value));
+  const stations = data.stations
+    .map(
+      (station) => `
+        <section class="station">
+          <h2>${escapeHtml(station.workstationName)}</h2>
+          ${station.items
+            .map(
+              (item) => `
+                <article>
+                  <strong>${quantity(item.quantity)} × ${escapeHtml(item.productName)}</strong>
+                  ${item.modifiers.length ? `<div class="detail">${item.modifiers.map(escapeHtml).join(" · ")}</div>` : ""}
+                  ${item.notes ? `<div class="note">Nota: ${escapeHtml(item.notes)}</div>` : ""}
+                </article>`,
+            )
+            .join("")}
+        </section>`,
+    )
+    .join("");
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Comanda ${escapeHtml(data.orderCode)}</title>
+    <style>
+      @page { size: 80mm auto; margin: 4mm; }
+      * { box-sizing: border-box; }
+      body { width: 72mm; margin: 0 auto; color: #111; font: 14px/1.35 Arial, sans-serif; }
+      header { text-align: center; border-bottom: 1px dashed #333; padding-bottom: 8px; }
+      h1 { font-size: 20px; margin: 0 0 5px; } p { margin: 3px 0; }
+      h2 { font-size: 16px; text-transform: uppercase; border-bottom: 1px solid #111; padding-bottom: 4px; }
+      .station { page-break-inside: avoid; } article { margin: 10px 0; page-break-inside: avoid; }
+      .detail, .note { margin: 3px 0 0 12px; } .note { font-weight: bold; }
+      @media print { body { width: 72mm; } }
+    </style></head><body>
+      <header><h1>COMANDA #${escapeHtml(data.orderCode)}</h1><p>${escapeHtml(data.tableName)}</p>
+      <p>${escapeHtml(data.waiterName)}</p><p>${new Date(data.createdAt).toLocaleString("es-CL")}</p></header>
+      ${stations}<script>window.onafterprint=()=>window.close();setTimeout(()=>window.print(),250)</script>
+    </body></html>`;
+}
+
 function currentBill(order: Order) {
   return order.billOrders
     ?.map(({ bill }) => bill)
@@ -88,12 +137,11 @@ function directCashTotal(order: Order) {
     .reduce((sum, payment) => sum + Number(payment.amount), 0);
 }
 
-const nextStatus: Partial<Record<OrderStatus, OrderStatus>> = {
-  READY: "DELIVERED",
-};
-
-const nextLabel: Partial<Record<OrderStatus, string>> = {
-  READY: "Marcar entregado",
+const itemStatusLabel: Record<string, string> = {
+  PENDING: "Sin imprimir",
+  SENT: "Impreso · pendiente de entrega",
+  DELIVERED: "Entregado",
+  CANCELLED: "Cancelado",
 };
 
 const input =
@@ -120,6 +168,7 @@ export default function OrdersPage() {
     [modifiers, setModifiers] = useState<Modifier[]>([]),
     [groups, setGroups] = useState<ModifierGroup[]>([]);
   const [loading, setLoading] = useState(false),
+    [dataLoaded, setDataLoaded] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [success, setSuccess] = useState("");
@@ -167,8 +216,10 @@ export default function OrdersPage() {
     setDetail(null);
     setError("");
     setSuccess("");
+    setDataLoaded(false);
     if (!locationId) {
       setLoading(false);
+      setDataLoaded(true);
       return;
     }
     setLoading(true);
@@ -187,7 +238,10 @@ export default function OrdersPage() {
         if (live) setError(message(e));
       })
       .finally(() => {
-        if (live) setLoading(false);
+        if (live) {
+          setLoading(false);
+          setDataLoaded(true);
+        }
       });
     return () => {
       live = false;
@@ -205,6 +259,40 @@ export default function OrdersPage() {
     setFilter("ALL");
     setSearchParams({}, { replace: true });
   }, [orders, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (searchParams.get("new") !== "order" || loading || !dataLoaded) return;
+
+    const requestedSessionId = searchParams.get("session");
+    const session = sessions.find((candidate) => candidate.id === requestedSessionId);
+    if (!session || session.waiterId !== user?.userId) {
+      setError("La mesa ya no está asignada a tu usuario. Actualiza las mesas o solicita la asignación al responsable.");
+      setSearchParams({}, { replace: true });
+      return;
+    }
+
+    const existingOrder = orders.find(
+      (order) =>
+        order.tableSessionId === session.id &&
+        !["CLOSED", "CANCELLED"].includes(order.status),
+    );
+    if (existingOrder) {
+      setSelectedId(existingOrder.id);
+      setFilter("ALL");
+      setSearch("");
+      setSearchParams({}, { replace: true });
+      return;
+    }
+
+    setNewType("DINE_IN");
+    setSessionId(session.id);
+    setCustomerName("");
+    setOrderNotes("");
+    setShowCreate(true);
+    setFilter("ACTIVE");
+    setSearch("");
+    setSearchParams({}, { replace: true });
+  }, [dataLoaded, loading, orders, searchParams, sessions, setSearchParams, user?.userId]);
 
   useEffect(() => {
     let live = true;
@@ -276,7 +364,7 @@ export default function OrdersPage() {
         if (filter === "ACTIVE" && ["CLOSED", "CANCELLED"].includes(o.status))
           return false;
         if (filter === "DRAFT" && o.status !== "DRAFT") return false;
-        if (filter === "READY" && o.status !== "READY") return false;
+        if (filter === "DELIVERED" && !["READY", "DELIVERED"].includes(o.status)) return false;
         if (filter === "PAID" && currentBill(o)?.status !== "PAID")
           return false;
         if (
@@ -299,11 +387,49 @@ export default function OrdersPage() {
             (sum, m) => sum + Number(m.priceDelta),
             0,
           )) *
-        item.quantity;
+        Number(item.quantity);
   const total = (detail?.items || []).reduce(
     (sum, item) => sum + itemTotal(item),
     0,
   );
+  const billableOrders = useMemo(() => {
+    if (!detail || detail.status !== "DELIVERED") return [];
+    const candidates =
+      detail.type === "DINE_IN" && detail.tableSessionId
+        ? orders.filter(
+            (order) => order.tableSessionId === detail.tableSessionId,
+          )
+        : orders.filter((order) => order.id === detail.id);
+
+    return candidates
+      .filter(
+        (order) =>
+          order.status === "DELIVERED" &&
+          (order.billOrders?.length ?? 0) === 0 &&
+          (user?.role !== "WAITER" || order.waiterId === user.userId),
+      )
+      .map((order) => ({
+        id: order.id,
+        label: `${order.type === "DINE_IN" ? order.tableSession?.table?.name ?? "Mesa" : `Para llevar${order.customerName ? ` · ${order.customerName}` : ""}`} · Pedido #${orderCode(order.id)}`,
+        total: order.items.reduce((sum, item) => sum + itemTotal(item), 0),
+      }));
+  }, [detail, orders, user?.role, user?.userId]);
+  const canOperateOrder =
+    !!detail &&
+    !!user &&
+    ["OWNER", "ADMIN", "MANAGER", "WAITER"].includes(user.role) &&
+    (user.role !== "WAITER" || detail.waiterId === user.userId);
+  const canAddProducts =
+    !!detail &&
+    canOperateOrder &&
+    !currentBill(detail) &&
+    !["CLOSED", "CANCELLED"].includes(detail.status) &&
+    (detail.type === "DINE_IN"
+      ? sessions.some(
+          (session) =>
+            session.id === detail.tableSessionId && session.status === "OPEN",
+        )
+      : detail.status === "DRAFT");
 
   const filteredProducts = products.filter(
     (p) =>
@@ -332,7 +458,7 @@ export default function OrdersPage() {
   const chooseProduct = async (p: Product, item: OrderItem | null = null) => {
     setChosenProduct(p);
     setEditingItem(item);
-    setQty(item?.quantity || 1);
+    setQty(Number(item?.quantity) || 1);
     setItemNotes(item?.notes || "");
     setModifierIds((item?.modifiers || []).map((m) => m.modifierId));
     setReadyStations({});
@@ -350,6 +476,10 @@ export default function OrdersPage() {
   const saveItem = async (e: FormEvent) => {
     e.preventDefault();
     if (!detail || !chosenProduct) return;
+    if (!Number.isFinite(qty) || qty <= 0 || Number(qty.toFixed(3)) !== qty) {
+      setError("La cantidad debe ser mayor que cero y admitir hasta 3 decimales.");
+      return;
+    }
     for (const g of groupedModifiers) {
       const count = productModifiers.filter(
         (m) => m.groupId === g.id && modifierIds.includes(m.id),
@@ -398,7 +528,9 @@ export default function OrdersPage() {
         : {
             locationId,
             type: newType,
-            customerName: customerName.trim(),
+            ...(customerName.trim()
+              ? { customerName: customerName.trim() }
+              : {}),
             notes: orderNotes,
             ...(user.role === "WAITER" ? { waiterId: user.userId } : {}),
           };
@@ -407,10 +539,6 @@ export default function OrdersPage() {
       (!currentSession || currentSession.waiterId !== user.userId)
     ) {
       setError("Selecciona una mesa asignada a tu usuario.");
-      return;
-    }
-    if (newType === "TAKEAWAY" && !customerName.trim()) {
-      setError("Ingresa el nombre del cliente.");
       return;
     }
     setBusy(true);
@@ -429,33 +557,45 @@ export default function OrdersPage() {
     }
   };
 
-  const changeStatus = async (status: OrderStatus) => {
+  const printDispatch = async (reprint = false) => {
     if (!detail) return;
-    if (
-      status === "SENT" &&
-      !(detail.items || []).some((i) => i.status !== "CANCELLED")
-    ) {
-      setError("Agrega al menos un producto antes de enviar.");
+    const printWindow = window.open("", "_blank", "width=480,height=720");
+    if (!printWindow) {
+      setError("El navegador bloqueó la impresión. Permite ventanas emergentes para este sitio e inténtalo nuevamente.");
       return;
     }
-    if (
-      !(await confirm({
-        title:
-          status === "SENT"
-            ? "Enviar a preparación"
-            : `Marcar como ${statusLabel[status].toLowerCase()}`,
-        description:
-          status === "SENT"
-            ? "Se generarán las comandas para las estaciones. Después del envío, cantidades y modificadores quedan bloqueados; las cancelaciones se resuelven desde preparación."
-            : `Confirma que el pedido puede pasar a «${statusLabel[status]}».`,
-        confirmLabel: status === "SENT" ? "Enviar pedido" : statusLabel[status],
-      }))
-    )
-      return;
-    void run(
-      () => ordersApi.status(detail.id, status),
-      `Pedido actualizado a ${statusLabel[status]}.`,
-    );
+    setBusy(true);
+    setError("");
+    setSuccess("");
+    try {
+      const printData = await ordersApi.dispatch(detail.id, reprint);
+      printWindow.document.open();
+      printWindow.document.write(printableOrder(printData));
+      printWindow.document.close();
+      await refresh();
+      setSuccess(reprint ? "Comanda reimpresa." : "Comanda enviada a impresión.");
+    } catch (err) {
+      printWindow.close();
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const markDelivered = async (item: OrderItem) => {
+    if (!detail) return;
+    setBusy(true);
+    setError("");
+    setSuccess("");
+    try {
+      await ordersApi.markItemDelivered(detail.id, item.id);
+      await refresh();
+      setSuccess(`«${item.productNameSnapshot}» marcado como entregado.`);
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const cancel = async () => {
@@ -464,7 +604,7 @@ export default function OrdersPage() {
       !(await confirm({
         title: "Cancelar pedido",
         description:
-          "Se cancelarán las comandas que aún no estén listas. Esta acción no se puede deshacer.",
+          "Se cancelará el pedido completo antes de imprimirlo. Los productos ya impresos deben cancelarse uno por uno y avisar a cocina.",
         confirmLabel: "Cancelar pedido",
         tone: "danger",
       }))
@@ -476,38 +616,20 @@ export default function OrdersPage() {
   const requestItemCancellation = async (item: OrderItem) => {
     if (!detail) return;
     const reason = await askInput({
-      title: "Solicitar cancelación de ítem",
-      description: `La estación revisará la solicitud para «${item.productNameSnapshot}». El ítem no se retirará de la cuenta hasta que preparación la apruebe.`,
+      title: "Cancelar producto impreso",
+      description: `«${item.productNameSnapshot}» se retirará de la cuenta. Avisa a cocina de inmediato para detener su preparación.`,
       label: "Motivo de cancelación",
-      placeholder: "Indica el motivo para cocina",
+      placeholder: "Indica el motivo",
       required: true,
       multiline: true,
-      confirmLabel: "Enviar solicitud",
+      confirmLabel: "Cancelar producto",
       tone: "danger",
     });
     if (!reason?.trim()) return;
     void run(
       () =>
         ordersApi.requestItemCancellation(detail.id, item.id, reason.trim()),
-      "Solicitud enviada a preparación.",
-    );
-  };
-
-  const amendItemNote = async (item: OrderItem) => {
-    if (!detail) return;
-    const note = await askInput({
-      title: "Actualizar nota para cocina",
-      description: `La nota nueva quedará visible en la comanda de «${item.productNameSnapshot}».`,
-      label: "Nota de preparación",
-      initialValue: item.notes ?? "",
-      placeholder: "Ej.: sin sal, salsa aparte…",
-      multiline: true,
-      confirmLabel: "Guardar nota",
-    });
-    if (note === null) return;
-    void run(
-      () => ordersApi.updateItem(detail.id, item.id, { notes: note }),
-      "Nota actualizada y visible para preparación.",
+      "Producto cancelado. Avisa a cocina de inmediato.",
     );
   };
 
@@ -597,8 +719,8 @@ export default function OrdersPage() {
                 ).length,
               },
               {
-                label: "Listos",
-                value: orders.filter((o) => o.status === "READY").length,
+                label: "Entregados",
+                value: orders.filter((o) => ["READY", "DELIVERED"].includes(o.status)).length,
               },
             ].map((c) => (
               <div key={c.label} className="rounded-xl border bg-white p-4">
@@ -611,7 +733,7 @@ export default function OrdersPage() {
             {[
               ["ACTIVE", "Activos"],
               ["DRAFT", "Borradores"],
-              ["READY", "Listos"],
+              ["DELIVERED", "Entregados"],
               ["PAID", "Pagados"],
               ["FINISHED", "Finalizados"],
               ["ALL", "Todos"],
@@ -783,7 +905,7 @@ export default function OrdersPage() {
               </div>
               <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
                 <div className="space-y-4">
-                  {detail.status === "DRAFT" && (
+                  {canAddProducts && (
                     <div className="rounded-xl border bg-white p-4">
                       <h3 className="mb-3 font-semibold">Agregar productos</h3>
                       <div className="relative mb-3">
@@ -881,18 +1003,15 @@ export default function OrdersPage() {
                                 {money(itemTotal(i))}
                               </span>
                             </div>
-                            {i.cancellationStatus === "PENDING" && (
-                              <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                                Cancelación pendiente de resolución por
-                                preparación: {i.cancellationReason}
-                              </p>
-                            )}
-                            {i.cancellationStatus === "REJECTED" && (
+                            <span className="mt-2 inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-700">
+                              {itemStatusLabel[i.status] ?? i.status}
+                            </span>
+                            {i.cancellationReason && i.status === "CANCELLED" && (
                               <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                                Preparación rechazó la cancelación.
+                                Motivo de cancelación: {i.cancellationReason}
                               </p>
                             )}
-                            {detail.status === "DRAFT" && (
+                            {canAddProducts && i.status === "PENDING" && (
                               <div className="mt-2 flex gap-3">
                                 <button
                                   className="text-xs text-indigo-600"
@@ -938,30 +1057,21 @@ export default function OrdersPage() {
                                 </button>
                               </div>
                             )}
-                            {["SENT", "IN_PROGRESS"].includes(detail.status) &&
-                              user &&
-                              (user.role === "OWNER" ||
-                                user.role === "ADMIN" ||
-                                user.role === "MANAGER" ||
-                                (user.role === "WAITER" &&
-                                  detail.waiterId === user.userId)) &&
-                              i.cancellationStatus !== "PENDING" &&
-                              i.cancellationStatus !== "APPROVED" &&
-                              i.status !== "CANCELLED" && (
+                            {canOperateOrder && i.status === "SENT" && (
                                 <div className="mt-2 flex gap-3">
                                   <button
-                                    className="text-xs text-indigo-600"
+                                    className="text-xs font-medium text-emerald-700"
                                     disabled={busy}
-                                    onClick={() => amendItemNote(i)}
+                                    onClick={() => void markDelivered(i)}
                                   >
-                                    Actualizar nota para cocina
+                                    Marcar entregado
                                   </button>
                                   <button
                                     className="text-xs text-red-600"
                                     disabled={busy}
                                     onClick={() => requestItemCancellation(i)}
                                   >
-                                    Solicitar cancelación
+                                    Cancelar producto
                                   </button>
                                 </div>
                               )}
@@ -983,27 +1093,30 @@ export default function OrdersPage() {
                     Calculado con precios y modificadores registrados. El cobro
                     se realizará en Caja.
                   </p>
-                  {detail.status === "DRAFT" && (
+                  {canAddProducts && (detail.items || []).some((i) => i.status === "PENDING") && (
                     <button
                       className={`${primary} w-full`}
                       disabled={busy}
-                      onClick={() => changeStatus("SENT")}
+                      onClick={() => void printDispatch(false)}
                     >
                       <Send size={16} />
-                      Enviar a preparación
+                      Imprimir comanda de productos nuevos
                     </button>
                   )}
-                  {nextStatus[detail.status] && (
+                  {canOperateOrder && (detail.items || []).some((i) => i.status === "SENT") && (
                     <button
-                      className={`${primary} w-full`}
+                      className={secondary + " w-full"}
                       disabled={busy}
-                      onClick={() => changeStatus(nextStatus[detail.status]!)}
+                      onClick={() => void printDispatch(true)}
                     >
-                      <CheckCircle2 size={16} />
-                      {nextLabel[detail.status]}
+                      Reimprimir productos pendientes
                     </button>
                   )}
-                  {["DRAFT", "SENT", "IN_PROGRESS"].includes(detail.status) && (
+                  {canOperateOrder &&
+                    ["DRAFT", "SENT"].includes(detail.status) &&
+                    (detail.items || []).every((i) =>
+                      ["PENDING", "CANCELLED"].includes(i.status),
+                    ) && (
                     <button
                       className={`${secondary} w-full text-red-600`}
                       disabled={busy}
@@ -1013,15 +1126,15 @@ export default function OrdersPage() {
                       Cancelar pedido
                     </button>
                   )}
-                  {detail.status === "SENT" && (
-                    <p className="text-xs text-amber-700">
-                      Cocina actualiza el pedido desde sus comandas. Cuando
-                      todas estén listas, podrás marcarlo como entregado.
+                  {detail.type === "DINE_IN" && canOperateOrder && !currentBill(detail) && (
+                    <p className="text-xs text-slate-500">
+                      Puedes agregar otra ronda al mismo pedido mientras la mesa siga abierta. Marca cada producto al entregarlo.
                     </p>
                   )}
                   {["DELIVERED", "CLOSED"].includes(detail.status) && (
                     <BillingPanel
                       orderId={detail.id}
+                      billableOrders={billableOrders}
                       locationId={detail.locationId}
                       orderStatus={detail.status}
                       onOrderUpdated={refresh}
@@ -1089,10 +1202,9 @@ export default function OrdersPage() {
             ) : (
               <div>
                 <label className="mb-1 block text-sm font-medium">
-                  Nombre del cliente
+                  Nombre del cliente (opcional)
                 </label>
                 <input
-                  required
                   className={input}
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
@@ -1156,28 +1268,24 @@ export default function OrdersPage() {
             {readyStations[chosenProduct.id] === false && (
               <div className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
                 Este producto no tiene una estación activa confirmada. Para
-                enviar el pedido debe tener al menos una estación configurada.
+                imprimir la comanda debe tener al menos una estación configurada.
               </div>
             )}
             <div>
               <label className="mb-1 block text-sm font-medium">Cantidad</label>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  className={secondary}
-                  onClick={() => setQty((v) => Math.max(1, v - 1))}
-                >
-                  <Minus size={16} />
-                </button>
-                <span className="min-w-8 text-center font-semibold">{qty}</span>
-                <button
-                  type="button"
-                  className={secondary}
-                  onClick={() => setQty((v) => v + 1)}
-                >
-                  <Plus size={16} />
-                </button>
-              </div>
+              <input
+                className={input}
+                type="number"
+                min="0.001"
+                max="999999999"
+                step="0.001"
+                required
+                value={qty}
+                onChange={(event) => setQty(Number(event.target.value))}
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Puedes ingresar cantidades fraccionarias, por ejemplo 0,5 kg.
+              </p>
             </div>
             {groupedModifiers.map((g) => (
               <div key={g.id} className="rounded-xl border p-3">

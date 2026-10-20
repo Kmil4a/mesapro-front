@@ -45,8 +45,73 @@ const paymentStatusLabel = {
   REVERSED: "Revertido",
 } as const;
 
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) =>
+    ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    })[character]!,
+  );
+}
+
+function printableBill(bill: Bill) {
+  const quantity = (value: string | number) =>
+    new Intl.NumberFormat("es-CL", { maximumFractionDigits: 3 }).format(Number(value));
+  const moneyText = (value: number | string) => escapeHtml(money(value));
+  const netSubtotal = Math.max(0, Number(bill.subtotal) - Number(bill.discountTotal));
+  const suggestedTip = Math.round(netSubtotal * 0.1);
+  const tipLabel = Number(bill.tipAmount) === suggestedTip
+    ? "Propina sugerida (10%)"
+    : "Propina";
+  const orders = bill.orders.map(({ order }) => {
+    if (!order) return "";
+    const place = order.tableSession?.table.name ?? order.customerName ?? `Pedido ${order.id.slice(-6).toUpperCase()}`;
+    const items = (order.items ?? []).map((item) => {
+      const unitTotal = Number(item.unitPrice) + item.modifiers.reduce(
+        (sum, modifier) => sum + Number(modifier.priceDelta), 0,
+      );
+      const lineTotal = unitTotal * Number(item.quantity);
+      const modifiers = item.modifiers.length
+        ? `<div class="detail">${item.modifiers.map((modifier) => escapeHtml(modifier.nameSnapshot)).join(" · ")}</div>`
+        : "";
+      return `<article><div class="line"><span>${quantity(item.quantity)} × ${escapeHtml(item.productNameSnapshot)}</span><strong>${moneyText(lineTotal)}</strong></div>${modifiers}</article>`;
+    }).join("");
+    return `<section><h2>${escapeHtml(place)}</h2>${items}</section>`;
+  }).join("");
+  const waiter = bill.orders.find((link) => link.order?.waiter)?.order?.waiter;
+  const waiterName = waiter ? `${waiter.firstName} ${waiter.lastName}` : "";
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Cuenta ${escapeHtml(bill.id.slice(-6).toUpperCase())}</title>
+    <style>
+      @page { size: 80mm auto; margin: 4mm; } * { box-sizing: border-box; }
+      body { width: 72mm; margin: 0 auto; color: #111; font: 13px/1.35 Arial,sans-serif; }
+      header { text-align: center; border-bottom: 1px dashed #333; padding-bottom: 8px; }
+      h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 14px; margin: 10px 0 4px; }
+      p { margin: 3px 0; } article { margin: 7px 0; } .line { display:flex; justify-content:space-between; gap:5px; }
+      .detail { margin-left: 10px; font-size: 11px; } .totals { border-top:1px dashed #333; margin-top:9px; padding-top:7px; }
+      .total { font-size:16px; font-weight:bold; } .hint { margin-top:10px; text-align:center; font-size:11px; }
+    </style></head><body><header><h1>CUENTA</h1><p>${escapeHtml(bill.location?.name ?? "Mesa Pro")}</p>
+    <p>N.º ${escapeHtml(bill.id.slice(-6).toUpperCase())}</p><p>${new Date(bill.createdAt).toLocaleString("es-CL")}</p>
+    ${waiterName ? `<p>Atendió: ${escapeHtml(waiterName)}</p>` : ""}</header>${orders}
+    <div class="totals"><div class="line"><span>Subtotal</span><strong>${moneyText(bill.subtotal)}</strong></div>
+    ${Number(bill.discountTotal) > 0 ? `<div class="line"><span>Descuentos</span><strong>− ${moneyText(bill.discountTotal)}</strong></div>` : ""}
+    <div class="line"><span>${tipLabel}</span><strong>${moneyText(bill.tipAmount)}</strong></div>
+    <div class="line total"><span>Total</span><strong>${moneyText(bill.total)}</strong></div></div>
+    <p class="hint">Si desea cambiar o retirar la propina, por favor avise a su mesero.</p>
+    <script>window.onafterprint=()=>window.close();setTimeout(()=>window.print(),250)</script></body></html>`;
+}
+
+function printBillWindow(printWindow: Window, bill: Bill) {
+  printWindow.document.open();
+  printWindow.document.write(printableBill(bill));
+  printWindow.document.close();
+}
+
 interface Props {
   orderId: string;
+  billableOrders: Array<{ id: string; label: string; total: number }>;
   locationId: string;
   orderStatus: OrderStatus;
   onOrderUpdated: () => Promise<void>;
@@ -54,6 +119,7 @@ interface Props {
 
 export default function BillingPanel({
   orderId,
+  billableOrders,
   locationId,
   orderStatus,
   onOrderUpdated,
@@ -68,6 +134,11 @@ export default function BillingPanel({
   const [method, setMethod] = useState<PaymentMethod>("CARD");
   const [amount, setAmount] = useState("");
   const [tipAmount, setTipAmount] = useState("0");
+  const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([orderId]);
+
+  useEffect(() => {
+    setSelectedOrderIds([orderId]);
+  }, [orderId]);
 
   const refreshBill = useCallback(async () => {
     const bills = await billingApi.list(locationId);
@@ -109,22 +180,39 @@ export default function BillingPanel({
     bill?.payments.some((p) => p.status === "PENDING") ?? false;
 
   async function requestBill() {
+    const printWindow = window.open("", "_blank", "width=480,height=720");
+    if (!printWindow) {
+      setError("El navegador bloqueó la impresión. Permite ventanas emergentes para este sitio e inténtalo nuevamente.");
+      return;
+    }
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const created = await billingApi.create([orderId]);
+      const created = await billingApi.create(selectedOrderIds);
       const detailed = await billingApi.get(created.id);
       setBill(detailed);
       setTipAmount(String(Number(detailed.tipAmount) || 0));
       setAmount(String(Number(detailed.total)));
-      setNotice("Cuenta generada desde los precios registrados en el pedido.");
+      printBillWindow(printWindow, detailed);
+      setNotice("Cuenta impresa con propina sugerida del 10%. Puedes ajustarla antes de registrar el pago.");
     } catch (err) {
+      printWindow.close();
       setError(errorMessage(err));
       await refreshBill().catch(() => undefined);
     } finally {
       setBusy(false);
     }
+  }
+
+  function printCurrentBill() {
+    if (!bill) return;
+    const printWindow = window.open("", "_blank", "width=480,height=720");
+    if (!printWindow) {
+      setError("El navegador bloqueó la impresión. Permite ventanas emergentes para este sitio e inténtalo nuevamente.");
+      return;
+    }
+    printBillWindow(printWindow, bill);
   }
 
   async function saveTip() {
@@ -291,20 +379,58 @@ export default function BillingPanel({
 
       {!bill ? (
         <>
-          <p className="text-sm text-slate-600">
-            El pedido ya fue entregado. Puedes generar su cuenta para cobrar.
-          </p>
+          <div>
+            <p className="text-sm text-slate-600">
+              Selecciona los pedidos entregados que el cliente pagará en una sola cuenta.
+            </p>
+            <div className="mt-3 space-y-2 rounded-lg border p-3">
+              {billableOrders.map((order) => (
+                <label key={order.id} className="flex cursor-pointer items-center gap-3 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={selectedOrderIds.includes(order.id)}
+                    disabled={order.id === orderId || busy}
+                    onChange={(event) =>
+                      setSelectedOrderIds((current) =>
+                        event.target.checked
+                          ? [...current, order.id]
+                          : current.filter((id) => id !== order.id),
+                      )
+                    }
+                  />
+                  <span className="flex-1">{order.label}</span>
+                  <span className="font-medium">{money(order.total)}</span>
+                </label>
+              ))}
+              {billableOrders.length === 0 && (
+                <p className="text-sm text-slate-500">No hay pedidos disponibles para agregar a esta cuenta.</p>
+              )}
+            </div>
+            <p className="mt-2 text-right text-sm font-semibold">
+              Subtotal estimado: {money(billableOrders
+                .filter((order) => selectedOrderIds.includes(order.id))
+                .reduce((sum, order) => sum + order.total, 0))}
+            </p>
+            <p className="text-right text-xs text-slate-500">
+              Propina sugerida (10%): {money(Math.round(billableOrders
+                .filter((order) => selectedOrderIds.includes(order.id))
+                .reduce((sum, order) => sum + order.total, 0) * 0.1))}
+            </p>
+          </div>
           <button
             className={primary}
-            disabled={busy || orderStatus !== "DELIVERED"}
+            disabled={busy || orderStatus !== "DELIVERED" || selectedOrderIds.length === 0}
             onClick={() => void requestBill()}
           >
             <ReceiptText size={16} />{" "}
-            {busy ? "Generando cuenta..." : "Solicitar cuenta"}
+            {busy ? "Generando cuenta..." : "Generar cuenta"}
           </button>
         </>
       ) : (
         <>
+          <button className={secondary} disabled={busy} onClick={printCurrentBill}>
+            <ReceiptText size={16} /> Imprimir cuenta
+          </button>
           <div className="space-y-2 rounded-lg bg-slate-50 p-3 text-sm">
             <MoneyRow label="Subtotal" value={money(bill.subtotal)} />
             <MoneyRow
@@ -323,7 +449,7 @@ export default function BillingPanel({
           {bill.status !== "PAID" && bill.status !== "VOID" && (
             <div className="space-y-2">
               <label className="block text-sm font-medium">
-                Propina opcional
+                Propina · 10% sugerida, editable
                 <input
                   className={`${input} mt-1`}
                   type="number"
@@ -469,9 +595,8 @@ export default function BillingPanel({
               </label>
               {method === "CASH" && (
                 <p className="text-xs text-amber-800">
-                  El efectivo requiere una sesión de caja abierta. Después de
-                  confirmar el pago, caja debe confirmar la recepción del
-                  dinero.
+                  Al registrar se confirma el pago. Si el efectivo lo recibió
+                  el mesero, caja debe confirmar después la recepción física.
                 </p>
               )}
               <button
@@ -483,7 +608,7 @@ export default function BillingPanel({
               >
                 {busy
                   ? "Registrando..."
-                  : `Registrar ${paymentMethodLabel[method].toLowerCase()}`}
+                  : "Registrar y confirmar pago"}
               </button>
               {method === "CASH" && (
                 <Link

@@ -84,11 +84,6 @@ function TicketCard({
   const canAccept = ticket.status === "PENDING";
   const canStart = ticket.status === "ACCEPTED";
   const canFinish = ticket.status === "IN_PROGRESS";
-  const itemCount = ticket.items.reduce(
-    (total, item) => total + item.quantity,
-    0,
-  );
-
   return (
     <article className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
       <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-4">
@@ -114,7 +109,7 @@ function TicketCard({
           <span>{elapsedMinutes(ticket.createdAt)} min en cola</span>
           <span aria-hidden="true">·</span>
           <span>
-            {itemCount} {itemCount === 1 ? "unidad" : "unidades"}
+            {ticket.items.length} {ticket.items.length === 1 ? "producto" : "productos"}
           </span>
         </div>
 

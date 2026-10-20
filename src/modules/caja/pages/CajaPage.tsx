@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   CircleDollarSign,
@@ -52,6 +52,8 @@ export default function CajaPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const closingAmountDirty = useRef(false);
 
   const canReceiveCash = ["OWNER", "ADMIN", "CASHIER"].includes(
     user?.role ?? "",
@@ -86,7 +88,7 @@ export default function CajaPage() {
     0,
   ) - directRefunds.reduce((sum, movement) => sum + Number(movement.amount || 0), 0);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async ({ background = false } = {}) => {
     if (!locationId) {
       setSession(null);
       setHandovers([]);
@@ -94,7 +96,9 @@ export default function CajaPage() {
       return;
     }
 
-    setLoading(true);
+    if (!background) {
+      setLoading(true);
+    }
     setError("");
     const results = await Promise.allSettled([
       cashApi.paymentHistory(locationId),
@@ -104,14 +108,16 @@ export default function CajaPage() {
     if (historyResult.status === "fulfilled") {
       setPayments(historyResult.value);
     } else {
-      setPayments([]);
+      if (!background) setPayments([]);
       setError(message(historyResult.reason));
     }
 
     if (sessionResult.status === "fulfilled") {
       const active = sessionResult.value;
       setSession(active);
-      setClosingAmount(String(expectedFrom(active)));
+      if (!closingAmountDirty.current) {
+        setClosingAmount(String(expectedFrom(active)));
+      }
       try {
         setHandovers(await cashApi.handovers(active.id));
       } catch (err) {
@@ -119,19 +125,43 @@ export default function CajaPage() {
         setError(message(err));
       }
     } else {
-      setSession(null);
-      setHandovers([]);
       const err = sessionResult.reason;
-      if (!(err instanceof ApiRequestError && err.statusCode === 404)) {
+      if (err instanceof ApiRequestError && err.statusCode === 404) {
+        setSession(null);
+        setHandovers([]);
+        closingAmountDirty.current = false;
+      } else {
+        if (!background) {
+          setSession(null);
+          setHandovers([]);
+        }
         setError(message(err));
       }
     }
-    setLoading(false);
+    if (
+      historyResult.status === "fulfilled" &&
+      (sessionResult.status === "fulfilled" ||
+        (sessionResult.reason instanceof ApiRequestError &&
+          sessionResult.reason.statusCode === 404))
+    ) {
+      setLastUpdated(new Date());
+    }
+    if (!background) setLoading(false);
+  }, [locationId]);
+
+  useEffect(() => {
+    closingAmountDirty.current = false;
   }, [locationId]);
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible" && !busy) {
+        void refresh({ background: true });
+      }
+    }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [refresh, busy]);
 
   async function openSession(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -141,6 +171,7 @@ export default function CajaPage() {
     setSuccess("");
     try {
       await cashApi.open(locationId, Number(openingAmount));
+      closingAmountDirty.current = false;
       await refresh();
       setSuccess("Caja abierta.");
     } catch (err) {
@@ -184,6 +215,7 @@ export default function CajaPage() {
     setSuccess("");
     try {
       const closed = await cashApi.close(session.id, Number(closingAmount));
+      closingAmountDirty.current = false;
       setSession(null);
       setHandovers([]);
       setSuccess(
@@ -203,6 +235,11 @@ export default function CajaPage() {
           <h1 className="text-2xl font-bold text-slate-900">Caja</h1>
           <p className="text-sm text-slate-500">
             Apertura, recepción de efectivo y cierre de caja
+          </p>
+          <p className="mt-1 text-xs text-slate-500" aria-live="polite">
+            {lastUpdated
+              ? `Actualizado ${lastUpdated.toLocaleTimeString("es-CL")} · sincronización automática cada 15 s`
+              : "Sincronizando caja..."}
           </p>
         </div>
         <button
@@ -456,7 +493,10 @@ export default function CajaPage() {
                 step="1"
                 required
                 value={closingAmount}
-                onChange={(event) => setClosingAmount(event.target.value)}
+                onChange={(event) => {
+                  closingAmountDirty.current = true;
+                  setClosingAmount(event.target.value);
+                }}
               />
             </label>
             <button className={secondary} disabled={busy} type="submit">

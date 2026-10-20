@@ -2,7 +2,6 @@ import { Link } from "react-router-dom";
 import {
   Table2,
   ClipboardList,
-  ChefHat,
   Wallet,
   ArrowRight,
 } from "lucide-react";
@@ -22,12 +21,6 @@ const modules = [
     description: "Crear y gestionar pedidos.",
     path: "/pedidos",
     icon: ClipboardList,
-  },
-  {
-    title: "Preparación",
-    description: "Consultar pedidos por estación.",
-    path: "/preparacion",
-    icon: ChefHat,
   },
   {
     title: "Caja",

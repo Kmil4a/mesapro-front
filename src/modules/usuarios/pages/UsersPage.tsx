@@ -14,7 +14,7 @@ const roleLabels: Record<UserRole, string> = {
   OWNER: 'Propietario', ADMIN: 'Administrador', MANAGER: 'Encargado',
   WAITER: 'Mesero', KITCHEN: 'Cocina', CASHIER: 'Caja',
 };
-const operationalRoles: UserRole[] = ['WAITER', 'KITCHEN', 'CASHIER'];
+const operationalRoles: UserRole[] = ['WAITER', 'CASHIER'];
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function roleOptions(actorRole?: UserRole): UserRole[] {

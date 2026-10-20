@@ -21,7 +21,24 @@ export interface Payment {
 export interface BillOrderLink {
   billId: string;
   orderId: string;
-  order?: { id: string; status: string; type: string };
+  order?: {
+    id: string;
+    status: string;
+    type: string;
+    customerName?: string | null;
+    tableSession?: { table: { name: string } } | null;
+    waiter?: { firstName: string; lastName: string } | null;
+    items?: Array<{
+      id: string;
+      productNameSnapshot: string;
+      quantity: number | string;
+      unitPrice: number | string;
+      modifiers: Array<{
+        nameSnapshot: string;
+        priceDelta: number | string;
+      }>;
+    }>;
+  };
 }
 
 export interface Bill {
@@ -35,6 +52,7 @@ export interface Bill {
   createdAt: string;
   orders: BillOrderLink[];
   payments: Payment[];
+  location?: { name: string };
 }
 
 export const billingApi = {

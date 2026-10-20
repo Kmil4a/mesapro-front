@@ -8,7 +8,7 @@ export type OrderStatus =
   | "CLOSED"
   | "CANCELLED";
 export type OrderItemStatus =
-  "PENDING" | "IN_PROGRESS" | "READY" | "DELIVERED" | "CANCELLED";
+  "PENDING" | "SENT" | "IN_PROGRESS" | "READY" | "DELIVERED" | "CANCELLED";
 export interface OrderModifier {
   id: string;
   orderItemId: string;
@@ -22,7 +22,7 @@ export interface OrderItem {
   productId: string;
   productNameSnapshot: string;
   unitPrice: number | string;
-  quantity: number;
+  quantity: number | string;
   notes: string | null;
   status: OrderItemStatus;
   cancellationStatus?: "NONE" | "PENDING" | "APPROVED" | "REJECTED";

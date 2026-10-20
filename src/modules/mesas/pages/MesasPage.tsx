@@ -15,6 +15,7 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../../auth/AuthContext";
 import { useAppDialog } from "../../../components/ui/AppDialog";
@@ -34,6 +35,7 @@ function getErrorMessage(error: unknown) {
 }
 
 export default function MesasPage() {
+  const navigate = useNavigate();
   const { confirm } = useAppDialog();
   const { user } = useAuth();
   const {
@@ -559,6 +561,19 @@ export default function MesasPage() {
                 <div className="mt-5 space-y-2">
                   {isOccupied && session ? (
                     <>
+                      {session.waiterId === user?.userId && (
+                        <button
+                          disabled={saving}
+                          onClick={() =>
+                            navigate(
+                              `/pedidos?session=${encodeURIComponent(session.id)}&new=order`,
+                            )
+                          }
+                          className="w-full rounded-lg bg-indigo-600 px-3 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                        >
+                          Crear pedido
+                        </button>
+                      )}
                       {isManager && (
                         <button
                           disabled={

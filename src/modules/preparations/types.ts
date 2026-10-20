@@ -17,7 +17,7 @@ export interface PreparationOrderItem {
   id: string;
   productId: string;
   productNameSnapshot: string;
-  quantity: number;
+  quantity: number | string;
   notes: string | null;
   status?: string;
   cancellationStatus?: "NONE" | "PENDING" | "APPROVED" | "REJECTED";
@@ -30,7 +30,7 @@ export interface PreparationTicketItem {
   id: string;
   ticketId: string;
   orderItemId: string;
-  quantity: number;
+  quantity: number | string;
   orderItem: PreparationOrderItem;
 }
 

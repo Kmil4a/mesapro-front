@@ -50,10 +50,31 @@ export const ordersApi = {
       body: JSON.stringify({ reason }),
     }),
 
-  status: (id: string, status: OrderStatus) =>
-    apiRequest<{ order: Order; preparationTickets: unknown[] }>(
-      `/orders/${q(id)}/status`,
-      { method: "PATCH", body: JSON.stringify({ status }) },
+  dispatch: (id: string, reprint = false) =>
+    apiRequest<{
+      orderCode: string;
+      tableName: string;
+      waiterName: string;
+      createdAt: string;
+      stations: Array<{
+        workstationId: string;
+        workstationName: string;
+        items: Array<{
+          id: string;
+          productName: string;
+          quantity: string;
+          notes: string | null;
+          modifiers: string[];
+        }>;
+      }>;
+    }>(`/orders/${q(id)}/dispatch${reprint ? "?reprint=true" : ""}`, {
+      method: "POST",
+    }),
+
+  markItemDelivered: (orderId: string, itemId: string) =>
+    apiRequest<{ itemId: string; orderStatus: OrderStatus }>(
+      `/orders/${q(orderId)}/items/${q(itemId)}/delivered`,
+      { method: "PATCH" },
     ),
 
   cancel: (id: string) =>
