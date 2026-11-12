@@ -16,6 +16,8 @@ import {
   type PaymentMethod,
 } from "../api/billing.api";
 import type { OrderStatus } from "../types";
+import { ordersApi } from "../api/orders.api";
+import { printableOrder } from "./printableOrder";
 
 const money = (value: number | string) =>
   new Intl.NumberFormat("es-CL", {
@@ -110,6 +112,7 @@ function printBillWindow(printWindow: Window, bill: Bill) {
 }
 
 interface Props {
+  takeaway?: boolean;
   orderId: string;
   billableOrders: Array<{ id: string; label: string; total: number }>;
   locationId: string;
@@ -118,6 +121,7 @@ interface Props {
 }
 
 export default function BillingPanel({
+  takeaway = false,
   orderId,
   billableOrders,
   locationId,
@@ -180,8 +184,8 @@ export default function BillingPanel({
     bill?.payments.some((p) => p.status === "PENDING") ?? false;
 
   async function requestBill() {
-    const printWindow = window.open("", "_blank", "width=480,height=720");
-    if (!printWindow) {
+    const printWindow = takeaway ? null : window.open("", "_blank", "width=480,height=720");
+    if (!takeaway && !printWindow) {
       setError("El navegador bloqueó la impresión. Permite ventanas emergentes para este sitio e inténtalo nuevamente.");
       return;
     }
@@ -194,10 +198,11 @@ export default function BillingPanel({
       setBill(detailed);
       setTipAmount(String(Number(detailed.tipAmount) || 0));
       setAmount(String(Number(detailed.total)));
-      printBillWindow(printWindow, detailed);
-      setNotice("Cuenta impresa con propina sugerida del 10%. Puedes ajustarla antes de registrar el pago.");
+      await onOrderUpdated();
+      if (printWindow) printBillWindow(printWindow, detailed);
+      setNotice(takeaway ? "Pedido listo para cobrar. Los tickets se imprimen al confirmar el pago completo." : "Cuenta impresa con propina sugerida del 10%. Puedes ajustarla antes de registrar el pago.");
     } catch (err) {
-      printWindow.close();
+      printWindow?.close();
       setError(errorMessage(err));
       await refreshBill().catch(() => undefined);
     } finally {
@@ -213,6 +218,50 @@ export default function BillingPanel({
       return;
     }
     printBillWindow(printWindow, bill);
+  }
+
+  async function printTakeawayTickets(paidBill: Bill, printWindow: Window | null) {
+    if (paidBill.status !== "PAID") return;
+    if (!printWindow) {
+      setNotice("Pago confirmado. Usa Imprimir tickets para cocina y cliente para completar la impresión.");
+      return;
+    }
+    try {
+      const order = await ordersApi.get(orderId);
+      const sent = order.items.some((item) => item.status === "SENT");
+      const pending = order.items.some((item) => item.status === "PENDING");
+      const code = orderId.slice(-6).toUpperCase();
+      const receipt = printableBill(paidBill).split("<body>")[1].split("<script>")[0]
+        .replace("<h1>CUENTA</h1>", `<h1>VALE DE RETIRO</h1><h1>#${escapeHtml(code)}</h1><p>PAGADO · PARA LLEVAR</p>`)
+        .replace(/<p class="hint">.*?<\/p>/, "");
+      const customer = `<section style="break-before:page;page-break-before:always">${receipt}<p>Conserva este vale para retirar tu pedido.</p></section>`;
+      let html: string;
+      if (pending || sent) {
+        const data = await ordersApi.dispatch(orderId, !pending && sent);
+        html = printableOrder(data)
+          .replace(".station { page-break-inside: avoid; }", ".station { page-break-inside: avoid; } .station + .station { break-before: page; }")
+          .replace("<script>", `${customer}<script>`);
+      } else {
+        html = printableBill(paidBill).replace("<h1>CUENTA</h1>", `<h1>VALE DE RETIRO</h1><h1>#${escapeHtml(code)}</h1><p>PAGADO · PARA LLEVAR</p>`);
+      }
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+      setNotice(`Pago confirmado. Tickets de cocina y vale de retiro #${code} enviados a impresión.`);
+      await onOrderUpdated();
+    } catch (err) {
+      printWindow.close();
+      setError(`El pago está confirmado, pero faltó imprimir los tickets: ${errorMessage(err)}. Puedes reintentar sin volver a cobrar.`);
+    }
+  }
+
+  async function reprintTakeaway() {
+    if (!bill || bill.status !== "PAID") return;
+    const printWindow = window.open("", "_blank", "width=480,height=720");
+    setBusy(true);
+    setError("");
+    try { await printTakeawayTickets(bill, printWindow); }
+    finally { setBusy(false); }
   }
 
   async function saveTip() {
@@ -235,8 +284,9 @@ export default function BillingPanel({
     }
   }
 
-  async function confirmPending(payment: Payment) {
+  async function confirmPending(payment: Payment, reservedWindow?: Window | null) {
     if (!bill) return;
+    const printWindow = reservedWindow === undefined && takeaway ? window.open("", "_blank", "width=480,height=720") : reservedWindow;
     setBusy(true);
     setError("");
     setNotice("");
@@ -244,16 +294,20 @@ export default function BillingPanel({
       await billingApi.updatePaymentStatus(bill.id, payment.id, "CONFIRMED");
       const updated = await refreshBill();
       if (updated?.status === "PAID") {
-        setNotice("Cuenta pagada. El pedido quedó cerrado.");
+        if (takeaway) await printTakeawayTickets(updated, printWindow ?? null);
+        else setNotice("Cuenta pagada. El pedido quedó cerrado.");
         await onOrderUpdated();
       } else if (payment.method === "CASH") {
+        printWindow?.close();
         setNotice(
           "Pago confirmado. La entrega de efectivo quedó pendiente de recepción en Caja.",
         );
       } else {
+        printWindow?.close();
         setNotice("Pago confirmado.");
       }
     } catch (err) {
+      printWindow?.close();
       setError(errorMessage(err));
       await refreshBill().catch(() => undefined);
     } finally {
@@ -323,6 +377,7 @@ export default function BillingPanel({
   async function registerPayment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!bill || Number(amount) <= 0) return;
+    const printWindow = takeaway ? window.open("", "_blank", "width=480,height=720") : null;
     setBusy(true);
     setError("");
     setNotice("");
@@ -338,8 +393,9 @@ export default function BillingPanel({
       );
       sessionStorage.removeItem(key);
       await refreshBill();
-      await confirmPending(payment);
+      await confirmPending(payment, printWindow);
     } catch (err) {
+      printWindow?.close();
       setError(errorMessage(err));
       await refreshBill().catch(() => undefined);
     } finally {
@@ -381,7 +437,7 @@ export default function BillingPanel({
         <>
           <div>
             <p className="text-sm text-slate-600">
-              Selecciona los pedidos entregados que el cliente pagará en una sola cuenta.
+              {takeaway ? "Revisa los productos y continúa al cobro. Al pagar se imprimen los tickets de cocina y el vale de retiro." : "Selecciona los pedidos entregados que el cliente pagará en una sola cuenta."}
             </p>
             <div className="mt-3 space-y-2 rounded-lg border p-3">
               {billableOrders.map((order) => (
@@ -411,26 +467,27 @@ export default function BillingPanel({
                 .filter((order) => selectedOrderIds.includes(order.id))
                 .reduce((sum, order) => sum + order.total, 0))}
             </p>
-            <p className="text-right text-xs text-slate-500">
+            {!takeaway && <p className="text-right text-xs text-slate-500">
               Propina sugerida (10%): {money(Math.round(billableOrders
                 .filter((order) => selectedOrderIds.includes(order.id))
                 .reduce((sum, order) => sum + order.total, 0) * 0.1))}
-            </p>
+            </p>}
           </div>
           <button
             className={primary}
-            disabled={busy || orderStatus !== "DELIVERED" || selectedOrderIds.length === 0}
+            disabled={busy || !(orderStatus === "DELIVERED" || (takeaway && orderStatus === "DRAFT" && billableOrders.length > 0)) || selectedOrderIds.length === 0}
             onClick={() => void requestBill()}
           >
             <ReceiptText size={16} />{" "}
-            {busy ? "Generando cuenta..." : "Generar cuenta"}
+            {busy ? "Generando cuenta..." : takeaway ? "Continuar al cobro" : "Generar cuenta"}
           </button>
         </>
       ) : (
         <>
-          <button className={secondary} disabled={busy} onClick={printCurrentBill}>
+          {!takeaway && <button className={secondary} disabled={busy} onClick={printCurrentBill}>
             <ReceiptText size={16} /> Imprimir cuenta
-          </button>
+          </button>}
+          {takeaway && bill.status === "PAID" && <button className={primary} disabled={busy} onClick={() => void reprintTakeaway()}>Imprimir tickets para cocina y cliente</button>}
           <div className="space-y-2 rounded-lg bg-slate-50 p-3 text-sm">
             <MoneyRow label="Subtotal" value={money(bill.subtotal)} />
             <MoneyRow
@@ -449,7 +506,7 @@ export default function BillingPanel({
           {bill.status !== "PAID" && bill.status !== "VOID" && (
             <div className="space-y-2">
               <label className="block text-sm font-medium">
-                Propina · 10% sugerida, editable
+                {takeaway ? "Propina opcional" : "Propina · 10% sugerida, editable"}
                 <input
                   className={`${input} mt-1`}
                   type="number"
@@ -552,7 +609,7 @@ export default function BillingPanel({
 
           {bill.status === "PAID" ? (
             <div className="rounded-lg bg-emerald-50 p-3 text-sm font-medium text-emerald-800">
-              Cuenta pagada y pedido cerrado.
+              {takeaway ? `Pedido pagado · Retiro #${orderId.slice(-6).toUpperCase()}. Entrega el vale al cliente y marca los productos cuando los retire.` : "Cuenta pagada y pedido cerrado."}
             </div>
           ) : bill.status === "VOID" ? (
             <div className="rounded-lg bg-slate-100 p-3 text-sm text-slate-600">

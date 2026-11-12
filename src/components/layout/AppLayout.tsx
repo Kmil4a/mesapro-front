@@ -4,9 +4,13 @@ import { Outlet, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import Sidebar from "./Sidebar";
+import { AssistantProvider } from "../../modules/assistant/AssistantProvider";
+import { AssistantWidget } from "../../modules/assistant/AssistantWidget";
+import { useLocation } from "../../context/LocationContext";
 
 export function AppLayout() {
   const { user, logout } = useAuth();
+  const { locationId } = useLocation();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -25,6 +29,7 @@ export function AppLayout() {
   }
 
   return (
+    <AssistantProvider key={`${user?.userId}:${user?.membershipId}:${user?.role}:${locationId}`}>
     <div className="flex h-screen overflow-hidden bg-slate-50">
       <div className="hidden lg:block">
           <Sidebar role={user?.role} />
@@ -89,6 +94,8 @@ export function AppLayout() {
           <Outlet />
         </main>
       </div>
+      <AssistantWidget />
     </div>
+    </AssistantProvider>
   );
 }

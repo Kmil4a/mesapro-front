@@ -34,6 +34,8 @@ import type {
   OrderItem,
 } from "../types";
 import BillingPanel from "../components/BillingPanel";
+import { useAssistantContext } from "../../assistant/assistantContext";
+import { printableOrder } from "../components/printableOrder";
 
 const money = (n: number | string) =>
   new Intl.NumberFormat("es-CL", {
@@ -69,57 +71,6 @@ function orderCode(id: string) {
   return id.slice(-6).toUpperCase();
 }
 
-function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, (character) =>
-    ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    })[character]!,
-  );
-}
-
-function printableOrder(data: Awaited<ReturnType<typeof ordersApi.dispatch>>) {
-  const quantity = (value: string) =>
-    new Intl.NumberFormat("es-CL", { maximumFractionDigits: 3 }).format(Number(value));
-  const stations = data.stations
-    .map(
-      (station) => `
-        <section class="station">
-          <h2>${escapeHtml(station.workstationName)}</h2>
-          ${station.items
-            .map(
-              (item) => `
-                <article>
-                  <strong>${quantity(item.quantity)} × ${escapeHtml(item.productName)}</strong>
-                  ${item.modifiers.length ? `<div class="detail">${item.modifiers.map(escapeHtml).join(" · ")}</div>` : ""}
-                  ${item.notes ? `<div class="note">Nota: ${escapeHtml(item.notes)}</div>` : ""}
-                </article>`,
-            )
-            .join("")}
-        </section>`,
-    )
-    .join("");
-  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Comanda ${escapeHtml(data.orderCode)}</title>
-    <style>
-      @page { size: 80mm auto; margin: 4mm; }
-      * { box-sizing: border-box; }
-      body { width: 72mm; margin: 0 auto; color: #111; font: 14px/1.35 Arial, sans-serif; }
-      header { text-align: center; border-bottom: 1px dashed #333; padding-bottom: 8px; }
-      h1 { font-size: 20px; margin: 0 0 5px; } p { margin: 3px 0; }
-      h2 { font-size: 16px; text-transform: uppercase; border-bottom: 1px solid #111; padding-bottom: 4px; }
-      .station { page-break-inside: avoid; } article { margin: 10px 0; page-break-inside: avoid; }
-      .detail, .note { margin: 3px 0 0 12px; } .note { font-weight: bold; }
-      @media print { body { width: 72mm; } }
-    </style></head><body>
-      <header><h1>COMANDA #${escapeHtml(data.orderCode)}</h1><p>${escapeHtml(data.tableName)}</p>
-      <p>${escapeHtml(data.waiterName)}</p><p>${new Date(data.createdAt).toLocaleString("es-CL")}</p></header>
-      ${stations}<script>window.onafterprint=()=>window.close();setTimeout(()=>window.print(),250)</script>
-    </body></html>`;
-}
-
 function currentBill(order: Order) {
   return order.billOrders
     ?.map(({ bill }) => bill)
@@ -153,6 +104,7 @@ const secondary =
 
 export default function OrdersPage() {
   const { user } = useAuth();
+  const { setOrderId: setAssistantOrderId } = useAssistantContext();
   const { confirm, input: askInput } = useAppDialog();
   const [searchParams, setSearchParams] = useSearchParams();
   const {
@@ -175,7 +127,7 @@ export default function OrdersPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null),
     [detail, setDetail] = useState<Order | null>(null);
   const [showCreate, setShowCreate] = useState(false),
-    [newType, setNewType] = useState<OrderType>("DINE_IN"),
+    [newType, setNewType] = useState<OrderType>(user?.role === "CASHIER" ? "TAKEAWAY" : "DINE_IN"),
     [sessionId, setSessionId] = useState(""),
     [customerName, setCustomerName] = useState(""),
     [orderNotes, setOrderNotes] = useState("");
@@ -191,6 +143,11 @@ export default function OrdersPage() {
   const [readyStations, setReadyStations] = useState<Record<string, boolean>>(
     {},
   );
+
+  useEffect(() => {
+    setAssistantOrderId(detail?.id ?? null);
+    return () => setAssistantOrderId(null);
+  }, [detail?.id, setAssistantOrderId]);
 
   const load = useCallback(async (id: string) => {
     const [os, ss, ps, cs, ms, gs] = await Promise.all([
@@ -250,15 +207,26 @@ export default function OrdersPage() {
 
   useEffect(() => {
     const requestedOrderId = searchParams.get("order");
+    if (!requestedOrderId) { setSelectedId(null); return; }
     if (
-      !requestedOrderId ||
       !orders.some((order) => order.id === requestedOrderId)
     )
       return;
     setSelectedId(requestedOrderId);
     setFilter("ALL");
-    setSearchParams({}, { replace: true });
+
   }, [orders, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (searchParams.get("focus") !== "billing" || !detail || detail.id !== selectedId || searchParams.get("order") !== detail.id) return;
+    const billing = document.getElementById("order-billing");
+    if (!billing) return;
+    billing.scrollIntoView({ behavior: "smooth", block: "start" });
+    billing.focus({ preventScroll: true });
+    const remaining = new URLSearchParams(searchParams);
+    remaining.delete("focus");
+    setSearchParams(remaining, { replace: true });
+  }, [detail, selectedId, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (searchParams.get("new") !== "order" || loading || !dataLoaded) return;
@@ -280,7 +248,7 @@ export default function OrdersPage() {
       setSelectedId(existingOrder.id);
       setFilter("ALL");
       setSearch("");
-      setSearchParams({}, { replace: true });
+      setSearchParams({ order: existingOrder.id }, { replace: true });
       return;
     }
 
@@ -313,7 +281,7 @@ export default function OrdersPage() {
     };
   }, [selectedId]);
 
-  const refresh = async () => {
+  const refresh = async (targetId = selectedId) => {
     if (!locationId) return;
     setLoading(true);
     try {
@@ -324,7 +292,7 @@ export default function OrdersPage() {
       setCategories(v.cs);
       setModifiers(v.ms);
       setGroups(v.gs);
-      if (selectedId) setDetail(await ordersApi.get(selectedId));
+      if (targetId) setDetail(await ordersApi.get(targetId));
     } catch (e) {
       setError(message(e));
     } finally {
@@ -393,7 +361,7 @@ export default function OrdersPage() {
     0,
   );
   const billableOrders = useMemo(() => {
-    if (!detail || detail.status !== "DELIVERED") return [];
+    if (!detail || !(detail.status === "DELIVERED" || (detail.type === "TAKEAWAY" && detail.status === "DRAFT"))) return [];
     const candidates =
       detail.type === "DINE_IN" && detail.tableSessionId
         ? orders.filter(
@@ -404,7 +372,7 @@ export default function OrdersPage() {
     return candidates
       .filter(
         (order) =>
-          order.status === "DELIVERED" &&
+          (order.status === "DELIVERED" || (order.type === "TAKEAWAY" && order.status === "DRAFT")) &&
           (order.billOrders?.length ?? 0) === 0 &&
           (user?.role !== "WAITER" || order.waiterId === user.userId),
       )
@@ -417,7 +385,8 @@ export default function OrdersPage() {
   const canOperateOrder =
     !!detail &&
     !!user &&
-    ["OWNER", "ADMIN", "MANAGER", "WAITER"].includes(user.role) &&
+    (["OWNER", "ADMIN", "MANAGER", "WAITER"].includes(user.role) ||
+      (user.role === "CASHIER" && detail.type === "TAKEAWAY")) &&
     (user.role !== "WAITER" || detail.waiterId === user.userId);
   const canAddProducts =
     !!detail &&
@@ -476,8 +445,8 @@ export default function OrdersPage() {
   const saveItem = async (e: FormEvent) => {
     e.preventDefault();
     if (!detail || !chosenProduct) return;
-    if (!Number.isFinite(qty) || qty <= 0 || Number(qty.toFixed(3)) !== qty) {
-      setError("La cantidad debe ser mayor que cero y admitir hasta 3 decimales.");
+    if (!Number.isSafeInteger(qty) || qty < 1 || qty > 999_999_999) {
+      setError("La cantidad debe ser un número entero entre 1 y 999999999.");
       return;
     }
     for (const g of groupedModifiers) {
@@ -546,9 +515,13 @@ export default function OrdersPage() {
     try {
       const created = await ordersApi.create(data);
       setShowCreate(false);
+      setOrders(current => [{ ...created, items: created.items ?? [] }, ...current.filter(order => order.id !== created.id)]);
       setSelectedId(created.id);
-      setDetail(await ordersApi.get(created.id));
-      await refresh();
+      setDetail({ ...created, items: created.items ?? [] });
+      setFilter("ALL");
+      setSearch("");
+      setSearchParams({ order: created.id });
+      await refresh(created.id);
       setSuccess("Pedido creado. Ahora agrega productos.");
     } catch (e) {
       setError(message(e));
@@ -656,6 +629,10 @@ export default function OrdersPage() {
             disabled={!locationId || busy}
             onClick={() => {
               setError("");
+              setNewType(user?.role === "CASHIER" ? "TAKEAWAY" : "DINE_IN");
+              setSessionId("");
+              setCustomerName("");
+              setOrderNotes("");
               setShowCreate(true);
             }}
           >
@@ -783,6 +760,7 @@ export default function OrdersPage() {
                     setError("");
                     setSuccess("");
                     setSelectedId(o.id);
+                    setSearchParams({ order: o.id });
                   }}
                   className="rounded-xl border bg-white p-5 text-left shadow-sm transition hover:border-indigo-300 hover:shadow-md"
                 >
@@ -835,6 +813,7 @@ export default function OrdersPage() {
             className={secondary}
             onClick={() => {
               setSelectedId(null);
+              setSearchParams({});
               setDetail(null);
               setChosenProduct(null);
               setEditingItem(null);
@@ -1093,7 +1072,7 @@ export default function OrdersPage() {
                     Calculado con precios y modificadores registrados. El cobro
                     se realizará en Caja.
                   </p>
-                  {canAddProducts && (detail.items || []).some((i) => i.status === "PENDING") && (
+                  {detail.type === "DINE_IN" && canAddProducts && (detail.items || []).some((i) => i.status === "PENDING") && (
                     <button
                       className={`${primary} w-full`}
                       disabled={busy}
@@ -1103,7 +1082,7 @@ export default function OrdersPage() {
                       Imprimir comanda de productos nuevos
                     </button>
                   )}
-                  {canOperateOrder && (detail.items || []).some((i) => i.status === "SENT") && (
+                  {detail.type === "DINE_IN" && canOperateOrder && (detail.items || []).some((i) => i.status === "SENT") && (
                     <button
                       className={secondary + " w-full"}
                       disabled={busy}
@@ -1112,7 +1091,7 @@ export default function OrdersPage() {
                       Reimprimir productos pendientes
                     </button>
                   )}
-                  {canOperateOrder &&
+                  {canOperateOrder && !currentBill(detail) &&
                     ["DRAFT", "SENT"].includes(detail.status) &&
                     (detail.items || []).every((i) =>
                       ["PENDING", "CANCELLED"].includes(i.status),
@@ -1131,14 +1110,17 @@ export default function OrdersPage() {
                       Puedes agregar otra ronda al mismo pedido mientras la mesa siga abierta. Marca cada producto al entregarlo.
                     </p>
                   )}
-                  {["DELIVERED", "CLOSED"].includes(detail.status) && (
+                  {(detail.type === "TAKEAWAY" || ["DELIVERED", "CLOSED"].includes(detail.status)) && (
+                    <div id="order-billing" tabIndex={-1} className="scroll-mt-4 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400">
                     <BillingPanel
                       orderId={detail.id}
+                      takeaway={detail.type === "TAKEAWAY"}
                       billableOrders={billableOrders}
                       locationId={detail.locationId}
                       orderStatus={detail.status}
                       onOrderUpdated={refresh}
                     />
+                    </div>
                   )}
                 </aside>
               </div>
@@ -1158,14 +1140,14 @@ export default function OrdersPage() {
                 <X size={20} />
               </button>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button
+            <div className={`grid gap-2 ${user?.role === "CASHIER" ? "grid-cols-1" : "grid-cols-2"}`}>
+              {user?.role !== "CASHIER" && <button
                 type="button"
                 onClick={() => setNewType("DINE_IN")}
                 className={`rounded-xl border p-3 text-sm ${newType === "DINE_IN" ? "border-indigo-500 bg-indigo-50" : "bg-white"}`}
               >
                 En mesa
-              </button>
+              </button>}
               <button
                 type="button"
                 onClick={() => setNewType("TAKEAWAY")}
@@ -1276,15 +1258,15 @@ export default function OrdersPage() {
               <input
                 className={input}
                 type="number"
-                min="0.001"
+                min="1"
                 max="999999999"
-                step="0.001"
+                step="1"
                 required
                 value={qty}
                 onChange={(event) => setQty(Number(event.target.value))}
               />
               <p className="mt-1 text-xs text-slate-500">
-                Puedes ingresar cantidades fraccionarias, por ejemplo 0,5 kg.
+                Ingresa una cantidad entera de productos.
               </p>
             </div>
             {groupedModifiers.map((g) => (
