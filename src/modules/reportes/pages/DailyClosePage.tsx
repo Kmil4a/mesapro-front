@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { Download, RefreshCw } from "lucide-react";
 import { useLocation } from "../../../context/LocationContext";
 import {
   reportsApi,
@@ -55,6 +55,8 @@ export default function DailyClosePage() {
   const [ranking, setRanking] = useState<ProductRankingReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
 
   const refresh = useCallback(async () => {
     if (!locationId || !date) {
@@ -87,6 +89,25 @@ export default function DailyClosePage() {
     void refresh();
   }, [refresh]);
 
+  async function downloadSales() {
+    if (!locationId || !date || downloading) return;
+    setDownloading(true);
+    setDownloadError("");
+    try {
+      const [sales, { downloadDailySales }] = await Promise.all([
+        reportsApi.dailySales(locationId, date),
+        import("../dailySalesWorkbook"),
+      ]);
+      await downloadDailySales(sales);
+    } catch (err) {
+      setDownloadError(
+        err instanceof Error ? err.message : "No fue posible descargar las ventas.",
+      );
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   const currency = report?.location.currency ?? "CLP";
 
   return (
@@ -99,13 +120,23 @@ export default function DailyClosePage() {
             sucursal.
           </p>
         </div>
-        <button
-          className={button}
-          disabled={loading || !locationId}
-          onClick={() => void refresh()}
-        >
-          <RefreshCw size={16} /> Actualizar
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className={button}
+            disabled={loading || !locationId}
+            onClick={() => void refresh()}
+          >
+            <RefreshCw size={16} /> Actualizar
+          </button>
+          <button
+            className={button}
+            disabled={downloading || locationsLoading || !locationId || !date}
+            onClick={() => void downloadSales()}
+          >
+            <Download size={16} />
+            {downloading ? "Preparando Excel..." : "Descargar ventas del día"}
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-3 rounded-xl border bg-white p-4">
@@ -114,7 +145,7 @@ export default function DailyClosePage() {
           <select
             className={input}
             value={locationId}
-            disabled={locationsLoading}
+            disabled={locationsLoading || downloading}
             onChange={(event) => setLocationId(event.target.value)}
           >
             {locations.map((location) => (
@@ -130,6 +161,7 @@ export default function DailyClosePage() {
             className={input}
             type="date"
             value={date}
+            disabled={downloading}
             onChange={(event) => setDate(event.target.value)}
           />
         </label>
@@ -140,6 +172,11 @@ export default function DailyClosePage() {
         )}
       </div>
 
+      {downloadError && (
+        <p role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">
+          {downloadError}
+        </p>
+      )}
       {error && (
         <div
           role="alert"

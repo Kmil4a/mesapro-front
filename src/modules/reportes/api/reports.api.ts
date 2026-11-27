@@ -66,10 +66,36 @@ export interface ProductRankingReport {
   basis: string;
 }
 
+export interface DailySalesReport {
+  date: string;
+  timeZone: string;
+  location: DailyCloseReport["location"];
+  totals: DailyCloseReport["bills"];
+  payments: Pick<
+    DailyCloseReport["payments"],
+    "confirmedByMethod" | "reversedByMethod" | "confirmedTotal" | "reversedTotal" | "netConfirmedTotal"
+  >;
+  sales: Array<{
+    id: string;
+    createdAt: string;
+    status: string;
+    orderIds: string[];
+    orderTypes: string[];
+    total: string;
+    paidByMethod: Record<"CASH" | "CARD" | "TRANSFER", string>;
+    paid: string;
+    balance: string;
+  }>;
+}
+
 export const reportsApi = {
   dailyClose: (locationId: string, date: string) =>
     apiRequest<DailyCloseReport>(
       `/reports/daily-close?locationId=${encodeURIComponent(locationId)}&date=${encodeURIComponent(date)}`,
+    ),
+  dailySales: (locationId: string, date: string) =>
+    apiRequest<DailySalesReport>(
+      `/reports/daily-sales?locationId=${encodeURIComponent(locationId)}&date=${encodeURIComponent(date)}`,
     ),
   productRanking: (locationId: string, date: string) =>
     apiRequest<ProductRankingReport>(
